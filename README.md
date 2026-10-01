@@ -2,7 +2,7 @@
 
 A premium, original e-commerce storefront built with Next.js, TypeScript, Tailwind CSS and Supabase.
 
-> **Status: Phase 1 of 15 complete (project foundation).**
+> **Status: Phase 2 of 15 complete (design system and global layout).**
 > Supabase, Google OAuth and Mailgun are intentionally not wired up yet. See [Roadmap](#roadmap).
 
 ## Technology stack
@@ -42,7 +42,7 @@ npm run dev                  # http://localhost:3000
 ```
 app/                 Routes, layouts, route handlers (App Router)
 components/
-  ui/                Design-system primitives (Button, Input, Badge...)
+  ui/                Design-system primitives (Button, Field, Badge, Dialog...)
   layout/            Header, footer, navigation, drawers
   shop/              Product cards, grids, filters
   cart/              Cart drawer and cart UI
@@ -55,10 +55,13 @@ lib/
   validation/        Shared input schemas (client and server)
   utils/             Small pure helpers
   site.ts            Site-level constants
+  nav.ts             Navigation and footer link config
 types/               Shared TypeScript types
 supabase/migrations/ SQL migrations (schema, RLS policies, seed data)
 public/              Static assets
 ```
+
+Design tokens and components are documented in [DESIGN.md](./DESIGN.md). During development, visit `/design` to see them all.
 
 Boundaries: UI components never talk to the database directly. They call server
 actions or route handlers, which call services, which use the Supabase clients.
@@ -78,7 +81,7 @@ These sections are filled in as the corresponding phases land (7, 9, 11 and 15).
 ## Roadmap
 
 1. Project initialization and architecture (done)
-2. Design system and global layout
+2. Design system and global layout (done)
 3. Homepage and storefront
 4. Product pages and search
 5. Cart

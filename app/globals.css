@@ -1,23 +1,250 @@
 @import "tailwindcss";
 
-/* Foundation tokens only. The full NOVA design system lands in Phase 2. */
-:root {
-  --background: #fafaf9;
-  --foreground: #1c1917;
+/* =====================================================================
+   NOVA design tokens
+   Palette: cool mineral paper, white surfaces, slate ink, one ultraviolet
+   accent. Type: Bricolage Grotesque (display + UI), Newsreader (reading).
+   ===================================================================== */
+
+@theme {
+  /* Neutrals */
+  --color-paper: #eff1ee;
+  --color-paper-deep: #e4e8e3;
+  --color-surface: #ffffff;
+  --color-ink: #1b2130;
+  --color-ink-soft: #343c4e;
+  --color-muted: #576070;
+  --color-line: #d3d8d2; /* decorative dividers */
+  --color-edge: #868e84; /* control borders (>= 3:1 on white) */
+
+  /* Accent: ultraviolet */
+  --color-accent: #4a2fe0;
+  --color-accent-hover: #3a22bf;
+  --color-accent-soft: #e8e4fc;
+  --color-accent-deep: #2b1a99;
+
+  /* Status */
+  --color-success: #17663f;
+  --color-success-soft: #e1f2e8;
+  --color-warning: #7a4e00;
+  --color-warning-soft: #fbefd5;
+  --color-danger: #b0241c;
+  --color-danger-soft: #fbe6e4;
+
+  /* Radius: controls are tight, panels slightly softer, badges are pills */
+  --radius-control: 3px;
+  --radius-panel: 8px;
+
+  /* Shadows are restrained: one for lifted cards, one for overlays */
+  --shadow-lift: 0 1px 2px rgb(27 33 48 / 0.06), 0 10px 28px -14px rgb(27 33 48 / 0.2);
+  --shadow-overlay: 0 28px 70px -28px rgb(27 33 48 / 0.4);
+
+  --ease-nova: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Type scale. Display sizes are fluid; line-height and tracking tighten as size grows. */
+  --text-display-xl: clamp(3rem, 1.8rem + 6vw, 7.25rem);
+  --text-display-xl--line-height: 0.94;
+  --text-display-xl--letter-spacing: -0.04em;
+  --text-display-lg: clamp(2.375rem, 1.6rem + 3.6vw, 4.75rem);
+  --text-display-lg--line-height: 1;
+  --text-display-lg--letter-spacing: -0.035em;
+  --text-display-md: clamp(1.875rem, 1.3rem + 2.2vw, 3.125rem);
+  --text-display-md--line-height: 1.05;
+  --text-display-md--letter-spacing: -0.028em;
+  --text-title: 1.375rem;
+  --text-title--line-height: 1.25;
+  --text-title--letter-spacing: -0.015em;
+  --text-lead: 1.25rem;
+  --text-lead--line-height: 1.6;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  /* System stacks for now; NOVA typefaces are chosen in Phase 2. */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: var(--font-sans-loaded), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-serif: var(--font-serif-loaded), ui-serif, Georgia, "Times New Roman", serif;
+}
+
+:root {
+  color-scheme: light;
+  --dur-quick: 150ms;
+  --dur-base: 260ms;
+  --dur-slow: 480ms;
+}
+
+/* Layout helpers: one gutter and one section rhythm used everywhere */
+@utility gutter-x {
+  padding-inline: clamp(1.25rem, 0.5rem + 3vw, 3.5rem);
+}
+@utility section-y {
+  padding-block: clamp(4rem, 2.5rem + 6vw, 9rem);
+}
+
+html {
+  scrollbar-gutter: stable;
+  scroll-padding-top: 5.5rem;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--color-paper);
+  color: var(--color-ink);
   font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-deep);
+}
+
+/* One visible focus treatment for every interactive element */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------
+   Overlays (modal + drawer) built on the native <dialog> element.
+   Native dialog gives us focus trapping, Escape handling and an inert page.
+   --------------------------------------------------------------------- */
+.nova-dialog {
+  padding: 0;
+  border: 0;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  max-width: none;
+  max-height: none;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    opacity var(--dur-base) var(--ease-nova),
+    transform var(--dur-base) var(--ease-nova),
+    overlay var(--dur-base) allow-discrete,
+    display var(--dur-base) allow-discrete;
+}
+.nova-dialog[open] {
+  opacity: 1;
+}
+.nova-dialog::backdrop {
+  background: rgb(27 33 48 / 0);
+  transition:
+    background-color var(--dur-base) var(--ease-nova),
+    overlay var(--dur-base) allow-discrete,
+    display var(--dur-base) allow-discrete;
+}
+.nova-dialog[open]::backdrop {
+  background: rgb(27 33 48 / 0.5);
+}
+@starting-style {
+  .nova-dialog[open] {
+    opacity: 0;
+  }
+  .nova-dialog[open]::backdrop {
+    background: rgb(27 33 48 / 0);
+  }
+}
+
+/* Centered modal */
+.nova-dialog[data-variant="modal"] {
+  width: min(34rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  margin: auto;
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-overlay);
+}
+/* Closed-state transforms live on :not([open]) so they never out-rank the open state. */
+.nova-dialog[data-variant="modal"]:not([open]) {
+  transform: translateY(12px) scale(0.985);
+}
+.nova-dialog[data-variant="modal"][data-align="top"] {
+  margin-top: clamp(1rem, 9vh, 6rem);
+}
+@starting-style {
+  .nova-dialog[data-variant="modal"][open] {
+    transform: translateY(12px) scale(0.985);
+  }
+}
+
+/* Side drawer: full-screen on small viewports, a fixed-width panel from sm up */
+.nova-dialog[data-variant="drawer"] {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  margin: 0;
+  width: 100%;
+  height: 100dvh;
+}
+@media (min-width: 40rem) {
+  .nova-dialog[data-variant="drawer"] {
+    width: 28rem;
+    box-shadow: var(--shadow-overlay);
+  }
+}
+.nova-dialog[data-variant="drawer"][data-side="right"] {
+  right: 0;
+  left: auto;
+}
+.nova-dialog[data-variant="drawer"][data-side="left"] {
+  left: 0;
+  right: auto;
+}
+.nova-dialog[data-variant="drawer"][data-side="right"]:not([open]) {
+  transform: translateX(100%);
+}
+.nova-dialog[data-variant="drawer"][data-side="left"]:not([open]) {
+  transform: translateX(-100%);
+}
+@starting-style {
+  .nova-dialog[data-variant="drawer"][data-side="right"][open] {
+    transform: translateX(100%);
+  }
+  .nova-dialog[data-variant="drawer"][data-side="left"][open] {
+    transform: translateX(-100%);
+  }
+}
+
+/* Lock page scroll while any overlay is open */
+html:has(.nova-dialog[open]) {
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------------
+   Motion. The nova star is the only decorative motion in the system.
+   --------------------------------------------------------------------- */
+@keyframes nova-spin {
+  0% {
+    transform: rotate(0deg) scale(0.82);
+  }
+  50% {
+    transform: rotate(45deg) scale(1);
+  }
+  100% {
+    transform: rotate(90deg) scale(0.82);
+  }
+}
+.nova-spin {
+  animation: nova-spin 1.1s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes nova-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+.nova-toast-in {
+  animation: nova-toast-in var(--dur-base) var(--ease-nova) both;
+}
+
+@keyframes nova-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+.nova-fade-in {
+  animation: nova-fade-in var(--dur-slow) var(--ease-nova) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
