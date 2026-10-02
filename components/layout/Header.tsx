@@ -22,7 +22,7 @@ export function Header() {
             <UserIcon />
             <span className="hidden lg:inline">Account</span>
           </Link>
-          <CartButton count={0} />
+          <CartButton />
           <MobileMenu />
         </div>
       </Container>

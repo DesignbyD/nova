@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from "next";
+import { CartDrawer } from "@/components/cart/CartDrawer";
+import { CartProvider } from "@/components/cart/CartProvider";
 import { Footer } from "@/components/layout/Footer";
 import { Header } from "@/components/layout/Header";
 import { ToastProvider } from "@/components/ui/Toast";
@@ -34,11 +36,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           Skip to content
         </a>
         <ToastProvider>
-          <Header />
-          <main id="main" className="flex-1">
-            {children}
-          </main>
-          <Footer />
+          <CartProvider>
+            <Header />
+            <main id="main" className="flex-1">
+              {children}
+            </main>
+            <Footer />
+            <CartDrawer />
+          </CartProvider>
         </ToastProvider>
       </body>
     </html>

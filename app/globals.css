@@ -238,6 +238,31 @@ html:has(.nova-dialog[open]) {
   animation: nova-toast-in var(--dur-base) var(--ease-nova) both;
 }
 
+@keyframes nova-pop {
+  0% {
+    transform: scale(0.7);
+  }
+  60% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.nova-pop {
+  animation: nova-pop var(--dur-base) var(--ease-nova) both;
+}
+
+@keyframes nova-draw {
+  from {
+    stroke-dashoffset: 24;
+  }
+}
+.nova-draw {
+  stroke-dasharray: 24;
+  animation: nova-draw 0.6s 0.15s var(--ease-nova) both;
+}
+
 @keyframes nova-fade-in {
   from {
     opacity: 0;
