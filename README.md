@@ -33,7 +33,7 @@ Commands: `npm run dev`, `npm run build`, `npm run start`, `npm run lint`, `npm 
 2. **SQL Editor**: run `supabase/migrations/0001_schema.sql`, then `supabase/seed.sql` (12 demo products).
 3. **Project Settings > API**: copy into `.env.local`
    - Project URL -> `NEXT_PUBLIC_SUPABASE_URL`
-   - `anon` public key -> `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `anon` public key -> `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
    - `service_role` key -> `SUPABASE_SERVICE_ROLE_KEY` (**secret**: never share, never prefix with `NEXT_PUBLIC_`)
 4. Restart `npm run dev`. The shop now reads from your database.
 

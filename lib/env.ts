@@ -3,7 +3,7 @@
  * so Next.js can inline them for the browser; server secrets are only read in server-only modules.
  */
 export function isSupabaseConfigured(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY);
 }
 
 /** True when the privileged server client can be created (orders, newsletter). */
