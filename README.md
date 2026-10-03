@@ -1,6 +1,6 @@
 # NOVA
 
-A premium e-commerce storefront: Next.js 16, TypeScript, Tailwind CSS 4, Supabase (Postgres, Auth, Google OAuth) and Mailgun.
+A premium e-commerce storefront: Next.js 16, TypeScript, Tailwind CSS 4, Supabase (Postgres, Auth, Google OAuth) and resend.
 
 ## What is included
 
@@ -9,7 +9,7 @@ A premium e-commerce storefront: Next.js 16, TypeScript, Tailwind CSS 4, Supabas
 - Checkout with client and server validation; the **server prices every order from the database**
 - Duplicate-submit protection (idempotency key) and oversell protection (row locks), inside one database transaction
 - Google sign-in (Supabase Auth), protected account area, order history, order details
-- Order confirmation email through Mailgun (HTML and plain text); email failures never affect the order
+- Order confirmation email through resend (HTML and plain text); email failures never affect the order
 - Row Level Security: customers can only read their own orders
 - Newsletter signup stored in the database
 - SEO: metadata, Open Graph, sitemap, robots, product structured data
@@ -50,14 +50,16 @@ Commands: `npm run dev`, `npm run build`, `npm run start`, `npm run lint`, `npm 
 
 The Google client secret lives only in Supabase. It is never in this repo.
 
-## 3. Mailgun
+## 3. Resend
 
-1. Create a Mailgun account and a domain. For testing, Mailgun's **sandbox domain** works, but it only delivers to **authorized recipients**: add your own address under Sending > Domain settings > Authorized recipients and confirm it.
-2. Set `MAILGUN_API_KEY` (a Sending key), `MAILGUN_DOMAIN`, and `MAILGUN_FROM_EMAIL` (for example `NOVA <postmaster@sandboxXXXX.mailgun.org>`).
-3. EU region accounts: set `MAILGUN_API_URL=https://api.eu.mailgun.net`.
-4. Production: add and verify your own domain (DNS: SPF, DKIM, and the MX/tracking records Mailgun lists), then use an address on it.
+Order confirmation emails are sent through Resend.
 
-If Mailgun rejects a message, the order is still saved, the reason is stored on the order (`email_status`, `email_error`), and the success page tells the customer plainly.
+1. Create a Resend account and generate an API key.
+2. Set `RESEND_API_KEY` in `.env.local`.
+3. Set `RESEND_FROM_EMAIL` to a sender address allowed by your Resend account.
+4. Keep `RESEND_API_KEY` server-side only. Never expose it with a `NEXT_PUBLIC_` variable.
+
+Email failures never affect the order itself. The order remains saved in Supabase and the email status/error is recorded on the order.
 
 ## 4. Deploy to Vercel
 
@@ -86,7 +88,7 @@ Design tokens and components are documented in [DESIGN.md](./DESIGN.md). `/desig
 ## Security notes
 
 - Prices and totals come from the database, never from the browser.
-- `SUPABASE_SERVICE_ROLE_KEY` and `MAILGUN_*` are server-only; the admin client is guarded with `server-only`.
+- `SUPABASE_SERVICE_ROLE_KEY` and `RESEND_*` are server-only; the admin client is guarded with `server-only`.
 - Row Level Security on every table; browsers can only read products and their own orders.
 - The order success page needs the secret link returned at checkout (or the owner signed in).
 - Login redirects accept same-site paths only.

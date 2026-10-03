@@ -11,8 +11,8 @@ export function isAdminConfigured(): boolean {
   return isSupabaseConfigured() && Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
-export function isMailgunConfigured(): boolean {
-  return Boolean(process.env.MAILGUN_API_KEY && process.env.MAILGUN_DOMAIN && process.env.MAILGUN_FROM_EMAIL);
+export function isResendConfigured(): boolean {
+  return Boolean(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL);
 }
 
 /**

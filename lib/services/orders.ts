@@ -1,6 +1,6 @@
 import "server-only";
-import { isAdminConfigured, isMailgunConfigured } from "@/lib/env";
-import { sendEmail } from "@/lib/email/mailgun";
+import { isAdminConfigured, isResendConfigured } from "@/lib/env";
+import { sendEmail } from "@/lib/email/resend";
 import { renderOrderConfirmation } from "@/lib/email/templates/orderConfirmation";
 import { logError } from "@/lib/logger";
 import { siteConfig } from "@/lib/site";
@@ -77,14 +77,17 @@ export async function createOrder(input: {
 export async function sendConfirmationEmail(order: OrderRow, items: OrderItemRow[]): Promise<EmailStatus> {
   const admin = createAdminClient();
 
-  if (!isMailgunConfigured()) {
-    await admin
-      .from("orders")
-      .update({ email_status: "failed", email_error: "Mailgun is not configured." })
-      .eq("id", order.id)
-      .neq("email_status", "sent");
-    return "failed";
-  }
+if (!isResendConfigured()) {
+  await admin
+    .from("orders")
+    .update({
+      email_status: "failed",
+      email_error: "Resend is not configured.",
+    })
+    .eq("id", order.id)
+    .neq("email_status", "sent");
+  return "failed";
+}
 
   const { data: claimed, error: claimError } = await admin.rpc("claim_order_email", { p_order_id: order.id });
   if (claimError) {
