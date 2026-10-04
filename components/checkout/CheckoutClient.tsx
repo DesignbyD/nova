@@ -2,288 +2,524 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
+
 import { verifyCart } from "@/app/checkout/actions";
 import { useCart } from "@/components/cart/CartProvider";
-import { Alert } from "@/components/ui/Alert";
-import { Button, ButtonLink } from "@/components/ui/Button";
-import { TextField } from "@/components/ui/Field";
-import { Skeleton } from "@/components/ui/Skeleton";
-import { EmptyState, ErrorState } from "@/components/ui/States";
 import { clampQuantity, maxFor } from "@/lib/cart/reducer";
 import type { CartItem } from "@/lib/cart/types";
-import { formatPrice } from "@/lib/utils/format";
-import { validateCustomer, type CustomerErrors, type CustomerInput } from "@/lib/validation/checkout";
-import { OrderSummary } from "./OrderSummary";
-
-type Props = { defaultName: string; defaultEmail: string; signedIn: boolean; ordersEnabled: boolean };
-type Verify = { status: "pending" | "done" | "error"; notices: string[] };
-
-const FIELD_ORDER: (keyof CustomerInput)[] = ["fullName", "email", "phone", "address", "city"];
-
-function Steps() {
-  const steps = ["Cart", "Details", "Confirmation"];
-  return (
-    <ol className="mb-8 flex items-center gap-3 text-sm" aria-label="Checkout progress">
-      {steps.map((label, i) => (
-        <li key={label} className="flex items-center gap-3" aria-current={i === 1 ? "step" : undefined}>
-          <span className={i === 1 ? "font-semibold text-ink" : i === 0 ? "text-ink-soft" : "text-muted"}>
-            <span className={`mr-2 inline-flex size-6 items-center justify-center rounded-full text-xs ${i === 1 ? "bg-ink text-paper" : i === 0 ? "bg-paper-deep" : "border border-edge"}`}>
-              {i === 0 ? "\u2713" : i + 1}
-            </span>
-            {label}
-          </span>
-          {i < steps.length - 1 ? <span aria-hidden="true" className="h-px w-6 bg-edge sm:w-12" /> : null}
-        </li>
-      ))}
-    </ol>
-  );
+function formatPrice(value: number): string {
+  return new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
-export function CheckoutClient({ defaultName, defaultEmail, signedIn, ordersEnabled }: Props) {
+type Props = {
+  defaultName: string;
+  defaultEmail: string;
+  signedIn: boolean;
+  ordersEnabled: boolean;
+};
+
+type Verify = {
+  status: "pending" | "done" | "error";
+  notices: string[];
+};
+
+export function CheckoutClient({
+  defaultName,
+  defaultEmail,
+  signedIn,
+  ordersEnabled,
+}: Props) {
   const router = useRouter();
-  const { items, subtotal, hydrated, replaceItems, clearCart } = useCart();
 
-  const [values, setValues] = useState<CustomerInput>({ fullName: defaultName, email: defaultEmail, phone: "", address: "", city: "" });
-  const [errors, setErrors] = useState<CustomerErrors>({});
-  const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [placed, setPlaced] = useState(false);
-  const [verify, setVerify] = useState<Verify>({ status: "pending", notices: [] });
-  const [attempt, setAttempt] = useState(0);
+  const {
+    items,
+    subtotal,
+    hydrated,
+    replaceItems,
+    clearCart,
+  } = useCart();
 
-  const verifiedFor = useRef<number>(-1);
-  const keyRef = useRef<{ hash: string; key: string } | null>(null);
-  const formRef = useRef<HTMLFormElement>(null);
   const cartRef = useRef<CartItem[]>(items);
-  // Keep the latest cart for the verification effect without re-running it on every cart change.
-  useEffect(() => {
-    cartRef.current = items;
+  const verifiedFor = useRef(0);
+
+  const [attempt, setAttempt] = useState(0);
+  const [verify, setVerify] = useState<Verify>({
+    status: "pending",
+    notices: [],
   });
 
-  // Check current prices and stock once per attempt, then bring the cart in line with the catalog.
+  const [name, setName] = useState(defaultName);
+  const [email, setEmail] = useState(defaultEmail);
+
+  const [placed, setPlaced] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
   useEffect(() => {
-    if (!hydrated || verifiedFor.current === attempt) return;
+    cartRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    if (!hydrated || verifiedFor.current === attempt) {
+      return;
+    }
+
     const snapshot = cartRef.current;
-    if (snapshot.length === 0) return;
+
+    if (snapshot.length === 0) {
+      setVerify({
+        status: "done",
+        notices: [],
+      });
+      return;
+    }
+
     verifiedFor.current = attempt;
 
     (async () => {
       let result: Awaited<ReturnType<typeof verifyCart>>;
+
       try {
-        result = await verifyCart(snapshot.map((i) => ({ productId: i.productId, quantity: i.quantity })));
+        result = await verifyCart(
+          snapshot.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+          })),
+        );
       } catch {
-        setVerify({ status: "error", notices: [] });
+        setVerify({
+          status: "error",
+          notices: [],
+        });
         return;
       }
+
       if (!result.ok) {
-        setVerify({ status: "error", notices: [] });
+        setVerify({
+          status: "error",
+          notices: [],
+        });
         return;
       }
-      const byId = new Map(result.products.map((p) => [p.productId, p]));
+
+      const byId = new Map(
+        result.products.map((product) => [
+          product.productId,
+          product,
+        ]),
+      );
+
       const notices: string[] = [];
       const next: CartItem[] = [];
+
       for (const item of snapshot) {
         const live = byId.get(item.productId);
         const max = live ? maxFor(live.stock) : 0;
+
         if (!live || max < 1) {
-          notices.push(`${item.name} is no longer available and was removed from your cart.`);
+          notices.push(
+            `${item.name} is no longer available and was removed from your cart.`,
+          );
           continue;
         }
-        if (live.price !== item.price) notices.push(`The price of ${live.name} is now ${formatPrice(live.price)}.`);
-        const quantity = clampQuantity(item.quantity, max);
-        if (quantity < item.quantity) notices.push(`Only ${max} of ${live.name} ${max === 1 ? "is" : "are"} available, so we updated your quantity.`);
-        next.push({ ...item, name: live.name, slug: live.slug, price: live.price, image: live.image ?? item.image, maxQuantity: max, quantity });
+
+        if (live.price !== item.price) {
+          notices.push(
+            `The price of ${live.name} is now ${formatPrice(live.price)}.`,
+          );
+        }
+
+        const quantity = clampQuantity(
+          item.quantity,
+          max,
+        );
+
+        if (quantity < item.quantity) {
+          notices.push(
+            `Only ${max} of ${live.name} ${
+              max === 1 ? "is" : "are"
+            } available, so we updated your quantity.`,
+          );
+        }
+
+        next.push({
+          ...item,
+          name: live.name,
+          slug: live.slug,
+          price: live.price,
+          image: live.image ?? item.image,
+          maxQuantity: max,
+          quantity,
+        });
       }
+
       replaceItems(next);
-      setVerify({ status: "done", notices });
+
+      setVerify({
+        status: "done",
+        notices,
+      });
     })();
   }, [hydrated, attempt, replaceItems]);
 
-  function setField(field: keyof CustomerInput, value: string) {
-    setValues((v) => ({ ...v, [field]: value }));
-    if (errors[field]) setErrors((e) => ({ ...e, [field]: undefined }));
+  function retryVerification() {
+    verifiedFor.current = 0;
+    setVerify({
+      status: "pending",
+      notices: [],
+    });
+    setAttempt((value) => value + 1);
   }
 
-  function validateField(field: keyof CustomerInput) {
-    const result = validateCustomer(values);
-    setErrors((e) => ({ ...e, [field]: result.ok ? undefined : result.errors[field] }));
-  }
-
-  async function onSubmit(event: FormEvent) {
+  async function handleSubmit(
+    event: FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
-    if (submitting || placed) return; // blocks duplicate submissions
 
-    const parsed = validateCustomer(values);
-    if (!parsed.ok) {
-      setErrors(parsed.errors);
-      setFormError(null);
-      const first = FIELD_ORDER.find((f) => parsed.errors[f]);
-      if (first) formRef.current?.querySelector<HTMLElement>(`[name="${first}"]`)?.focus();
+    if (submitting || placed) {
       return;
     }
 
-    // The same cart + details always reuse the same key, so a retry can never create a second order.
-    const lines = items.map((i) => ({ productId: i.productId, quantity: i.quantity }));
-    const hash = JSON.stringify({ c: parsed.data, l: lines });
-    if (keyRef.current?.hash !== hash) keyRef.current = { hash, key: crypto.randomUUID() };
+    setError("");
+
+    if (!name.trim()) {
+      setError("Please enter your name.");
+      return;
+    }
+
+    if (!email.trim()) {
+      setError("Please enter your email address.");
+      return;
+    }
+
+    if (items.length === 0) {
+      setError("Your cart is empty.");
+      return;
+    }
+
+    if (!ordersEnabled) {
+      setError(
+        "Ordering isn't available yet. Please finish the store database setup.",
+      );
+      return;
+    }
+
+    if (verify.status === "error") {
+      setError(
+        "Please verify your cart again before placing the order.",
+      );
+      return;
+    }
 
     setSubmitting(true);
-    setFormError(null);
-    try {
-      const res = await fetch("/api/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idempotencyKey: keyRef.current.key, customer: parsed.data, items: lines }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        orderNumber?: string;
-        accessToken?: string;
-        error?: string;
-        code?: string;
-        fieldErrors?: CustomerErrors;
-      };
 
-      if (res.ok && data.orderNumber && data.accessToken) {
-        // Success is only shown now, after the server has confirmed the order.
-        setPlaced(true);
-        clearCart();
-        router.push(`/order-success/${data.orderNumber}?token=${encodeURIComponent(data.accessToken)}`);
+    try {
+      const response = await fetch("/api/orders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          customerName: name.trim(),
+          customerEmail: email.trim(),
+          items: items.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+          })),
+        }),
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setError(
+          data?.error ??
+            "We couldn't place your order. Please try again.",
+        );
+
+        setAttempt((value) => value + 1);
         return;
       }
 
-      if (data.fieldErrors) setErrors(data.fieldErrors);
-      if (data.code === "stock") {
-        verifiedFor.current = -1;
-        setAttempt((a) => a + 1); // re-check the cart so the shopper sees what changed
-        keyRef.current = null;
+      if (
+        data?.orderNumber &&
+        data?.accessToken
+      ) {
+        setPlaced(true);
+
+        clearCart();
+
+        router.push(
+          `/order-success/${data.orderNumber}?token=${encodeURIComponent(
+            data.accessToken,
+          )}`,
+        );
+
+        return;
       }
-      setFormError(data.error ?? "We couldn't place your order. Please try again.");
+
+      setError(
+        "Your order was created, but we couldn't open the confirmation page.",
+      );
     } catch {
-      setFormError("We couldn't confirm your order. It's safe to try again: you won't be ordered twice.");
+      setError(
+        "Something went wrong while placing your order. Please try again.",
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
-  // ----- states -----
-  if (!hydrated || (items.length > 0 && verify.status === "pending" && !placed)) {
+  if (!hydrated) {
     return (
-      <div role="status" aria-label="Preparing checkout" className="grid gap-12 lg:grid-cols-[1.2fr_1fr]">
-        <div className="flex flex-col gap-6">
-          <Skeleton className="h-10 w-48" />
-          {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-12 w-full" />
-          ))}
-        </div>
-        <Skeleton className="h-80 w-full" />
+      <div className="mx-auto max-w-3xl py-16 text-center">
+        <p className="text-sm text-neutral-500">
+          Loading your cart…
+        </p>
       </div>
     );
   }
 
-  if (placed) {
-    return <EmptyState title="Order placed" description="Taking you to your confirmation." />;
-  }
-
-  if (items.length === 0) {
+  if (items.length === 0 && !placed) {
     return (
-      <EmptyState
-        title="Your cart is empty"
-        description="Add something you love, then come back to check out."
-        action={<ButtonLink href="/shop">Browse the shop</ButtonLink>}
-      />
-    );
-  }
+      <div className="mx-auto max-w-3xl py-16 text-center">
+        <h1 className="text-3xl font-semibold tracking-tight">
+          Your cart is empty
+        </h1>
 
-  if (verify.status === "error") {
-    return (
-      <ErrorState
-        title="We couldn't check your cart"
-        description="We need the latest prices and stock before you order. Please try again."
-        onRetry={() => {
-          verifiedFor.current = -1;
-          setVerify({ status: "pending", notices: [] });
-          setAttempt((a) => a + 1);
-        }}
-      />
+        <p className="mt-3 text-sm text-neutral-500">
+          Add something to your cart before checking out.
+        </p>
+
+        <Link
+          href="/shop"
+          className="mt-8 inline-flex rounded-full bg-black px-6 py-3 text-sm font-medium text-white"
+        >
+          Continue shopping
+        </Link>
+      </div>
     );
   }
 
   return (
-    <div>
-      <Steps />
-      <h1 className="text-display-md font-semibold">Checkout</h1>
+    <div className="mx-auto grid max-w-6xl gap-10 lg:grid-cols-[1fr_380px]">
+      <div>
+        <div className="mb-8">
+          <p className="text-xs font-medium uppercase tracking-[0.2em] text-neutral-500">
+            NOVA checkout
+          </p>
 
-      {verify.notices.length > 0 ? (
-        <Alert tone="warning" title="We updated your cart" className="mt-6">
-          <ul className="list-disc pl-5">
-            {verify.notices.map((n) => (
-              <li key={n}>{n}</li>
-            ))}
-          </ul>
-        </Alert>
-      ) : null}
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight">
+            Complete your order
+          </h1>
 
-      {!ordersEnabled ? (
-        <Alert tone="warning" title="Ordering isn't set up yet" className="mt-6">
-          This store isn&apos;t connected to its database, so orders can&apos;t be placed. See the README to finish setup.
-        </Alert>
-      ) : null}
-
-      <div className="mt-8 grid gap-10 lg:grid-cols-[1.2fr_1fr] lg:gap-16">
-        <div>
-          <details className="mb-8 rounded-panel border border-line bg-surface lg:hidden">
-            <summary className="flex min-h-12 cursor-pointer items-center justify-between px-4 font-medium">
-              <span>Order summary</span>
-              <span className="tabular-nums">{formatPrice(subtotal)}</span>
-            </summary>
-            <div className="border-t border-line p-4">
-              <OrderSummary items={items} subtotal={subtotal} />
-            </div>
-          </details>
-
-          <form ref={formRef} onSubmit={onSubmit} noValidate aria-describedby={formError ? "form-error" : undefined}>
-            {!signedIn ? (
-              <p className="mb-6 text-sm text-muted">
-                Have an account?{" "}
-                <Link href="/login?next=/checkout" className="text-ink underline underline-offset-4 hover:text-accent">
-                  Sign in
-                </Link>{" "}
-                to keep your orders together. You can also check out as a guest.
-              </p>
-            ) : null}
-            <fieldset disabled={submitting} className="grid gap-5 sm:grid-cols-2">
-              <legend className="mb-5 text-title font-semibold">Your details</legend>
-              <TextField label="Full name" name="fullName" autoComplete="name" value={values.fullName} error={errors.fullName} onChange={(e) => setField("fullName", e.target.value)} onBlur={() => validateField("fullName")} wrapperClassName="sm:col-span-2" required />
-              <TextField label="Email" name="email" type="email" autoComplete="email" inputMode="email" hint="Your confirmation is sent here." value={values.email} error={errors.email} onChange={(e) => setField("email", e.target.value)} onBlur={() => validateField("email")} required />
-              <TextField label="Phone" name="phone" type="tel" autoComplete="tel" inputMode="tel" value={values.phone} error={errors.phone} onChange={(e) => setField("phone", e.target.value)} onBlur={() => validateField("phone")} required />
-              <TextField label="Address" name="address" autoComplete="street-address" value={values.address} error={errors.address} onChange={(e) => setField("address", e.target.value)} onBlur={() => validateField("address")} wrapperClassName="sm:col-span-2" required />
-              <TextField label="City" name="city" autoComplete="address-level2" value={values.city} error={errors.city} onChange={(e) => setField("city", e.target.value)} onBlur={() => validateField("city")} wrapperClassName="sm:col-span-2" required />
-            </fieldset>
-
-            {formError ? (
-              <div id="form-error" className="mt-6">
-                <Alert tone="danger">{formError}</Alert>
-              </div>
-            ) : null}
-
-            <Button type="submit" variant="accent" size="lg" fullWidth className="mt-8" loading={submitting} disabled={!ordersEnabled}>
-              {submitting ? "Placing your order" : `Place order \u00b7 ${formatPrice(subtotal)}`}
-            </Button>
-            <p className="mt-3 text-center text-sm text-muted">The total is confirmed by our server when you place the order.</p>
-          </form>
+          <p className="mt-3 text-sm text-neutral-500">
+            Review your details and place your order securely.
+          </p>
         </div>
 
-        <aside className="hidden lg:block" aria-label="Order summary">
-          <div className="sticky top-28 rounded-panel border border-line bg-surface p-6">
-            <h2 className="mb-5 text-title font-semibold">Order summary</h2>
-            <OrderSummary items={items} subtotal={subtotal} />
-            <Link href="/shop" className="mt-5 inline-block text-sm text-muted underline underline-offset-4 hover:text-ink">
-              Continue shopping
-            </Link>
+        {verify.notices.length > 0 && (
+          <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+            <p className="text-sm font-medium text-amber-900">
+              We updated your cart.
+            </p>
+
+            <ul className="mt-2 space-y-1 text-sm text-amber-800">
+              {verify.notices.map((notice) => (
+                <li key={notice}>• {notice}</li>
+              ))}
+            </ul>
           </div>
-        </aside>
+        )}
+
+        {verify.status === "error" && (
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4">
+            <p className="text-sm text-red-800">
+              We couldn't verify your cart right now.
+            </p>
+
+            <button
+              type="button"
+              onClick={retryVerification}
+              className="mt-3 rounded-full bg-black px-4 py-2 text-sm font-medium text-white"
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
+        {!signedIn && (
+          <div className="mb-6 rounded-2xl border border-neutral-200 bg-neutral-50 p-5">
+            <p className="text-sm text-neutral-700">
+              Have an account?{" "}
+              <Link
+                href="/auth/sign-in"
+                className="font-medium underline"
+              >
+                Sign in
+              </Link>{" "}
+              to keep your orders together. You can also
+              check out as a guest.
+            </p>
+          </div>
+        )}
+
+        <form
+          onSubmit={handleSubmit}
+          className="space-y-6"
+        >
+          <div className="rounded-3xl border border-neutral-200 p-6">
+            <h2 className="text-lg font-medium">
+              Contact information
+            </h2>
+
+            <div className="mt-6 space-y-5">
+              <div>
+                <label
+                  htmlFor="name"
+                  className="mb-2 block text-sm font-medium"
+                >
+                  Full name
+                </label>
+
+                <input
+                  id="name"
+                  name="name"
+                  type="text"
+                  value={name}
+                  onChange={(event) =>
+                    setName(event.target.value)
+                  }
+                  autoComplete="name"
+                  className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none focus:border-black"
+                  required
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="email"
+                  className="mb-2 block text-sm font-medium"
+                >
+                  Email address
+                </label>
+
+                <input
+                  id="email"
+                  name="email"
+                  type="email"
+                  value={email}
+                  onChange={(event) =>
+                    setEmail(event.target.value)
+                  }
+                  autoComplete="email"
+                  className="w-full rounded-2xl border border-neutral-300 px-4 py-3 outline-none focus:border-black"
+                  required
+                />
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+              <p className="text-sm text-red-800">
+                {error}
+              </p>
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={
+              submitting ||
+              verify.status === "pending" ||
+              verify.status === "error" ||
+              items.length === 0
+            }
+            className="w-full rounded-full bg-black px-6 py-4 text-sm font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {submitting
+              ? "Placing order…"
+              : "Place order"}
+          </button>
+        </form>
       </div>
+
+      <aside className="h-fit rounded-3xl border border-neutral-200 p-6 lg:sticky lg:top-8">
+        <h2 className="text-lg font-medium">
+          Order summary
+        </h2>
+
+        <div className="mt-6 space-y-4">
+          {items.map((item) => (
+            <div
+              key={item.productId}
+              className="flex items-start justify-between gap-4"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">
+                  {item.name}
+                </p>
+
+                <p className="mt-1 text-xs text-neutral-500">
+                  Qty {item.quantity}
+                </p>
+              </div>
+
+              <p className="shrink-0 text-sm">
+                {formatPrice(
+                  item.price * item.quantity,
+                )}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        <div className="my-6 border-t border-neutral-200" />
+
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-neutral-500">
+            Subtotal
+          </span>
+
+          <span className="font-medium">
+            {formatPrice(subtotal)}
+          </span>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between">
+          <span className="text-sm text-neutral-500">
+            Shipping
+          </span>
+
+          <span className="text-sm">
+            Calculated at checkout
+          </span>
+        </div>
+
+        <div className="my-6 border-t border-neutral-200" />
+
+        <div className="flex items-center justify-between">
+          <span className="font-medium">
+            Total
+          </span>
+
+          <span className="text-lg font-semibold">
+            {formatPrice(subtotal)}
+          </span>
+        </div>
+      </aside>
     </div>
   );
 }

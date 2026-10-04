@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getUser } from "@/lib/auth";
+import { getUser, getUserFromRequest } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logError } from "@/lib/logger";
 
@@ -30,17 +30,19 @@ const json = (
 ) =>
   NextResponse.json(body, {
     status,
-    headers: { "Cache-Control": "no-store" },
+    headers: {
+      "Cache-Control": "no-store",
+    },
   });
 
-async function requireUser() {
-  const user = await getUser();
+async function requireUser(request: Request) {
+  const authorization = request.headers.get("authorization");
 
-  if (!user) {
-    return null;
+  if (authorization?.startsWith("Bearer ")) {
+    return getUserFromRequest(request);
   }
 
-  return user;
+  return getUser();
 }
 
 async function getOrCreateCart(userId: string) {
@@ -52,7 +54,9 @@ async function getOrCreateCart(userId: string) {
     .eq("user_id", userId)
     .maybeSingle();
 
-  if (findError) throw findError;
+  if (findError) {
+    throw findError;
+  }
 
   if (existing) {
     return existing;
@@ -60,7 +64,9 @@ async function getOrCreateCart(userId: string) {
 
   const { data: created, error: createError } = await admin
     .from("carts")
-    .insert({ user_id: userId })
+    .insert({
+      user_id: userId,
+    })
     .select("id, user_id, created_at, updated_at")
     .single();
 
@@ -72,8 +78,13 @@ async function getOrCreateCart(userId: string) {
       .eq("user_id", userId)
       .maybeSingle();
 
-    if (retryError) throw retryError;
-    if (retry) return retry;
+    if (retryError) {
+      throw retryError;
+    }
+
+    if (retry) {
+      return retry;
+    }
 
     throw createError;
   }
@@ -101,9 +112,13 @@ async function readCart(userId: string) {
       )
     `)
     .eq("cart_id", cart.id)
-    .order("created_at", { ascending: true });
+    .order("created_at", {
+      ascending: true,
+    });
 
-  if (error) throw error;
+  if (error) {
+    throw error;
+  }
 
   return {
     id: cart.id,
@@ -131,18 +146,16 @@ async function readCart(userId: string) {
   };
 }
 
-/**
- * GET /api/cart
- *
- * Returns the authenticated user's shared cart.
- */
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireUser(request);
 
     if (!user) {
       return json(
-        { code: "unauthorized", error: "Please sign in to access your cart." },
+        {
+          code: "unauthorized",
+          error: "Please sign in to access your cart.",
+        },
         401,
       );
     }
@@ -150,44 +163,35 @@ export async function GET() {
     return json(await readCart(user.id));
   } catch (error) {
     logError("api.cart.get", error);
+
     return json(
-      { code: "server", error: "We couldn't load your cart." },
+      {
+        code: "server",
+        error: "We couldn't load your cart.",
+      },
       500,
     );
   }
 }
 
-/**
- * POST /api/cart
- *
- * Adds an item to the authenticated user's cart.
- */
 export async function POST(request: Request) {
   return updateCart(request);
 }
 
-/**
- * PATCH /api/cart
- *
- * Changes an item's quantity.
- */
 export async function PATCH(request: Request) {
   return updateCart(request);
 }
 
-/**
- * DELETE /api/cart
- *
- * Removes an item when productId is supplied.
- * Clears the whole cart when no productId is supplied.
- */
 export async function DELETE(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireUser(request);
 
     if (!user) {
       return json(
-        { code: "unauthorized", error: "Please sign in to access your cart." },
+        {
+          code: "unauthorized",
+          error: "Please sign in to access your cart.",
+        },
         401,
       );
     }
@@ -204,7 +208,10 @@ export async function DELETE(request: Request) {
 
       if (text.length > MAX_BODY_BYTES) {
         return json(
-          { code: "validation", error: "Request too large." },
+          {
+            code: "validation",
+            error: "Request too large.",
+          },
           413,
         );
       }
@@ -218,7 +225,10 @@ export async function DELETE(request: Request) {
           }
         } catch {
           return json(
-            { code: "validation", error: "Invalid request." },
+            {
+              code: "validation",
+              error: "Invalid request.",
+            },
             400,
           );
         }
@@ -236,13 +246,26 @@ export async function DELETE(request: Request) {
 
     const { error } = await query;
 
-    if (error) throw error;
+    if (error) {
+      throw error;
+    }
+
+    await admin
+      .from("carts")
+      .update({
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", cart.id);
 
     return json(await readCart(user.id));
   } catch (error) {
     logError("api.cart.delete", error);
+
     return json(
-      { code: "server", error: "We couldn't update your cart." },
+      {
+        code: "server",
+        error: "We couldn't update your cart.",
+      },
       500,
     );
   }
@@ -250,18 +273,28 @@ export async function DELETE(request: Request) {
 
 async function updateCart(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireUser(request);
 
     if (!user) {
       return json(
-        { code: "unauthorized", error: "Please sign in to access your cart." },
+        {
+          code: "unauthorized",
+          error: "Please sign in to access your cart.",
+        },
         401,
       );
     }
 
-    if (!request.headers.get("content-type")?.includes("application/json")) {
+    if (
+      !request.headers
+        .get("content-type")
+        ?.includes("application/json")
+    ) {
       return json(
-        { code: "validation", error: "Invalid request." },
+        {
+          code: "validation",
+          error: "Invalid request.",
+        },
         415,
       );
     }
@@ -270,7 +303,10 @@ async function updateCart(request: Request) {
 
     if (text.length > MAX_BODY_BYTES) {
       return json(
-        { code: "validation", error: "Request too large." },
+        {
+          code: "validation",
+          error: "Request too large.",
+        },
         413,
       );
     }
@@ -281,14 +317,20 @@ async function updateCart(request: Request) {
       body = JSON.parse(text);
     } catch {
       return json(
-        { code: "validation", error: "Invalid request." },
+        {
+          code: "validation",
+          error: "Invalid request.",
+        },
         400,
       );
     }
 
     if (!body || typeof body !== "object") {
       return json(
-        { code: "validation", error: "Invalid request." },
+        {
+          code: "validation",
+          error: "Invalid request.",
+        },
         422,
       );
     }
@@ -300,14 +342,23 @@ async function updateCart(request: Request) {
       action.type !== "setQuantity"
     ) {
       return json(
-        { code: "validation", error: "Invalid cart action." },
+        {
+          code: "validation",
+          error: "Invalid cart action.",
+        },
         422,
       );
     }
 
-    if (typeof action.productId !== "string" || !action.productId) {
+    if (
+      typeof action.productId !== "string" ||
+      !action.productId
+    ) {
       return json(
-        { code: "validation", error: "Invalid product." },
+        {
+          code: "validation",
+          error: "Invalid product.",
+        },
         422,
       );
     }
@@ -336,7 +387,9 @@ async function updateCart(request: Request) {
       .eq("id", action.productId)
       .maybeSingle();
 
-    if (productError) throw productError;
+    if (productError) {
+      throw productError;
+    }
 
     if (!product) {
       return json(
@@ -356,7 +409,9 @@ async function updateCart(request: Request) {
       .eq("product_id", action.productId)
       .maybeSingle();
 
-    if (existingError) throw existingError;
+    if (existingError) {
+      throw existingError;
+    }
 
     let nextQuantity = quantity;
 
@@ -382,30 +437,44 @@ async function updateCart(request: Request) {
     if (existing) {
       const { error } = await admin
         .from("cart_items")
-        .update({ quantity: nextQuantity })
+        .update({
+          quantity: nextQuantity,
+        })
         .eq("id", existing.id);
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
     } else {
-      const { error } = await admin.from("cart_items").insert({
-        cart_id: cart.id,
-        product_id: action.productId,
-        quantity: nextQuantity,
-      });
+      const { error } = await admin
+        .from("cart_items")
+        .insert({
+          cart_id: cart.id,
+          product_id: action.productId,
+          quantity: nextQuantity,
+        });
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
     }
 
     await admin
       .from("carts")
-      .update({ updated_at: new Date().toISOString() })
+      .update({
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", cart.id);
 
     return json(await readCart(user.id));
   } catch (error) {
     logError("api.cart.update", error);
+
     return json(
-      { code: "server", error: "We couldn't update your cart." },
+      {
+        code: "server",
+        error: "We couldn't update your cart.",
+      },
       500,
     );
   }
