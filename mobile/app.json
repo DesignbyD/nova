@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "NOVA",
+    "slug": "nova",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "nova",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.designbyd.nova"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-web-browser"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "6b767c7b-b25e-4538-9652-0f5b796810dd"
+      }
+    }
+  }
+}
