@@ -1,73 +1,251 @@
+console.log("🔥🔥🔥 NEW NOVA APP IS RUNNING 🔥🔥🔥");
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Home,
+  LogOut,
+  Minus,
+  Plus,
+  ShoppingBag,
+  ShoppingCart,
+  Store,
+  Trash2,
+  UserRound,
+} from "lucide-react-native";
 import * as WebBrowser from "expo-web-browser";
 import { makeRedirectUri } from "expo-auth-session";
-
 import { supabase } from "./lib/supabase";
-import { getProducts, Product } from "./lib/api";
+import { getProducts, type Product } from "./lib/api";
 
 WebBrowser.maybeCompleteAuthSession();
 
-const redirectTo = makeRedirectUri({
-  scheme: "nova",
-  path: "auth/callback",
-});
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
-type AuthMode = "login" | "signup";
-type Screen = "home" | "shop" | "cart" | "account";
+type AppScreen =
+  | "home"
+  | "shop"
+  | "cart"
+  | "account"
+  | "checkout"
+  | "success";
+
+type SessionUser = {
+  id: string;
+  email?: string;
+  user_metadata?: {
+    full_name?: string;
+    name?: string;
+  };
+};
+
+type SessionLike = {
+  access_token: string;
+  user: SessionUser;
+};
+
+type CartItem = {
+  productId: string;
+  quantity: number;
+  name: string;
+  slug: string;
+  price: number;
+  image: { src: string; alt: string } | null;
+  maxQuantity?: number;
+};
+
+type CartResponse = {
+  id: string;
+  items: CartItem[];
+};
+
+type ApiCartResponse = {
+  id: string;
+  items: Array<{
+    id: string;
+    productId: string;
+    quantity: number;
+    product: {
+      id: string;
+      slug: string;
+      name: string;
+      price: number;
+      images: Array<{ src: string; alt: string }>;
+      stock: number;
+    } | null;
+  }>;
+};
+
+function normalizeCart(data: ApiCartResponse): CartResponse {
+  return {
+    id: data.id,
+    items: data.items.flatMap((item) => {
+      if (!item.product) return [];
+      return [{
+        productId: item.productId,
+        quantity: item.quantity,
+        name: item.product.name,
+        slug: item.product.slug,
+        price: Number(item.product.price),
+        image: item.product.images?.[0] ?? null,
+        maxQuantity: Math.min(10, Number(item.product.stock)),
+      }];
+    }),
+  };
+}
+
+function getAssetUrl(src: string | undefined | null) {
+  if (!src) return null;
+  if (/^https?:\/\//i.test(src)) return src;
+  if (!API_URL) return src;
+  return `${API_URL.replace(/\/$/, "")}/${src.replace(/^\//, "")}`;
+}
+
+function formatPrice(value: number) {
+  return new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: "NGN",
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function createIdempotencyKey() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  // The server validates this field as a UUID. Keep the fallback UUID-shaped
+  // so checkout also works on Hermes/Android where randomUUID may be absent.
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = char === "x" ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
+
+async function apiFetch<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  if (!API_URL) {
+    throw new Error("Mobile API URL is not configured.");
+  }
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const headers = new Headers(options.headers);
+  headers.set("Content-Type", "application/json");
+
+  if (session?.access_token) {
+    headers.set("Authorization", `Bearer ${session.access_token}`);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers,
+    });
+  } catch {
+    throw new Error(
+      "We couldn't reach NOVA right now. Please check your internet connection and try again.",
+    );
+  }
+
+  const data: unknown = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const errorData = data as { error?: string } | null;
+    throw new Error(
+      errorData?.error ?? `Request failed with status ${response.status}`,
+    );
+  }
+
+  return data as T;
+}
+
+function clampQuantity(quantity: number, max: number) {
+  return Math.max(1, Math.min(quantity, Math.max(1, max)));
+}
+
+function getUserName(user: SessionUser | null) {
+  return (
+    user?.user_metadata?.full_name ??
+    user?.user_metadata?.name ??
+    user?.email?.split("@")[0] ??
+    ""
+  );
+}
 
 export default function App() {
-  const [session, setSession] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-
-  const [authMode, setAuthMode] = useState<AuthMode>("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const [screen, setScreen] = useState<Screen>("home");
+  console.log("🔥🔥🔥 THIS IS THE NEW NOVA APP.TSX 🔥🔥🔥");
+  const [session, setSession] = useState<SessionLike | null>(null);
+  const [loadingAuth, setLoadingAuth] = useState(true);
+  const [screen, setScreen] = useState<AppScreen>("home");
 
   const [products, setProducts] = useState<Product[]>([]);
-  const [productsLoading, setProductsLoading] = useState(false);
+  const [loadingProducts, setLoadingProducts] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [productsError, setProductsError] = useState("");
+  const [productError, setProductError] = useState("");
 
-  const [search, setSearch] = useState("");
+  const [cart, setCart] = useState<CartResponse>({
+    id: "",
+    items: [],
+  });
+  const [loadingCart, setLoadingCart] = useState(false);
+  const [cartBusy, setCartBusy] = useState(false);
 
-  /*
-   * Check whether the user is already signed in.
-   */
+  const [checkoutName, setCheckoutName] = useState("");
+  const [checkoutEmail, setCheckoutEmail] = useState("");
+  const [checkoutPhone, setCheckoutPhone] = useState("");
+  const [checkoutAddress, setCheckoutAddress] = useState("");
+  const [checkoutCity, setCheckoutCity] = useState("");
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [checkoutError, setCheckoutError] = useState("");
+  const [orderNumber, setOrderNumber] = useState("");
+
+  const subtotal = useMemo(
+    () => cart.items.reduce((sum, item) => sum + item.price * item.quantity, 0),
+    [cart.items],
+  );
+
+  const cartCount = useMemo(
+    () => cart.items.reduce((sum, item) => sum + item.quantity, 0),
+    [cart.items],
+  );
+
   useEffect(() => {
     let mounted = true;
 
     supabase.auth.getSession().then(({ data }) => {
-      if (mounted) {
-        setSession(data.session);
-        setLoading(false);
-      }
+      if (!mounted) return;
+      setSession(data.session as SessionLike | null);
+      setLoadingAuth(false);
     });
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(
-      (_event, nextSession) => {
-        setSession(nextSession);
-        setLoading(false);
-      },
-    );
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession as SessionLike | null);
+      setLoadingAuth(false);
+    });
 
     return () => {
       mounted = false;
@@ -75,1301 +253,1610 @@ export default function App() {
     };
   }, []);
 
-  /*
-   * Load products after the user is signed in.
-   */
   useEffect(() => {
-    if (session) {
-      loadProducts();
+    if (!session) {
+      setCart({ id: "", items: [] });
+      return;
     }
+
+    void loadCart();
   }, [session]);
+
+  useEffect(() => {
+    void loadProducts();
+  }, []);
 
   async function loadProducts() {
     try {
-      setProductsLoading(true);
-      setProductsError("");
-
-      const data = await getProducts();
-
-      setProducts(data);
+      setLoadingProducts(true);
+      setProductError("");
+      const result = await getProducts();
+      setProducts(result);
     } catch (error) {
-      console.error(error);
-
-      setProductsError(
+      setProductError(
         error instanceof Error
           ? error.message
-          : "Could not load products.",
+          : "We couldn't load the products.",
       );
     } finally {
-      setProductsLoading(false);
+      setLoadingProducts(false);
     }
   }
 
-  async function refreshProducts() {
+  async function loadCart() {
+    if (!session) return;
+
     try {
-      setRefreshing(true);
-
-      const data = await getProducts();
-
-      setProducts(data);
-      setProductsError("");
+      setLoadingCart(true);
+      const result = await apiFetch<ApiCartResponse>("/api/cart");
+      setCart(normalizeCart(result));
     } catch (error) {
-      console.error(error);
+      Alert.alert(
+        "Cart",
+        error instanceof Error
+          ? error.message
+          : "We couldn't load your cart.",
+      );
     } finally {
-      setRefreshing(false);
+      setLoadingCart(false);
     }
   }
 
-  /*
-   * Email login / signup.
-   */
-  async function handleEmailAuth() {
-    if (!email.trim() || !password) {
-      Alert.alert(
-        "Missing information",
-        "Enter your email and password.",
-      );
+  async function addCartItem(product: Product) {
+    if (!session) {
+      Alert.alert("Sign in required", "Please sign in before adding items.");
       return;
     }
 
     try {
-      setBusy(true);
+      setCartBusy(true);
 
-      if (authMode === "login") {
-        const { error } =
-          await supabase.auth.signInWithPassword({
-            email: email.trim(),
-            password,
-          });
+      const existing = cart.items.find(
+        (item) => item.productId === product.id,
+      );
+      const nextQuantity = (existing?.quantity ?? 0) + 1;
 
-        if (error) {
-          throw error;
-        }
-      } else {
-        const { error } = await supabase.auth.signUp({
-          email: email.trim(),
-          password,
-        });
-
-        if (error) {
-          throw error;
-        }
-
+      if (nextQuantity > 10 || nextQuantity > product.stock) {
         Alert.alert(
-          "Account created",
-          "Check your email if confirmation is required.",
+          "Quantity unavailable",
+          `Only ${Math.min(10, product.stock)} of this item can be added.`,
         );
+        return;
       }
+
+      const result = await apiFetch<ApiCartResponse>("/api/cart", {
+        method: "POST",
+        body: JSON.stringify({
+          type: "add",
+          productId: product.id,
+          quantity: 1,
+        }),
+      });
+
+      setCart(normalizeCart(result));
     } catch (error) {
       Alert.alert(
-        "Authentication error",
-        error instanceof Error
-          ? error.message
-          : "Something went wrong.",
+        "Couldn't add item",
+        error instanceof Error ? error.message : "Please try again.",
       );
     } finally {
-      setBusy(false);
+      setCartBusy(false);
     }
   }
 
-  /*
-   * Google login.
-   */
-  async function handleGoogleAuth() {
+  async function updateCartItem(productId: string, quantity: number) {
+    if (quantity <= 0) {
+      await removeCartItem(productId);
+      return;
+    }
+
     try {
-      setBusy(true);
+      setCartBusy(true);
 
-      const { data, error } =
-        await supabase.auth.signInWithOAuth({
-          provider: "google",
-          options: {
-            redirectTo,
-            skipBrowserRedirect: true,
-            queryParams: {
-              prompt: "select_account",
-            },
+      const result = await apiFetch<ApiCartResponse>("/api/cart", {
+        method: "PATCH",
+        body: JSON.stringify({
+          type: "setQuantity",
+          productId,
+          quantity: clampQuantity(quantity, 10),
+        }),
+      });
+
+      setCart(normalizeCart(result));
+    } catch (error) {
+      Alert.alert(
+        "Couldn't update cart",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setCartBusy(false);
+    }
+  }
+
+  async function removeCartItem(productId: string) {
+    try {
+      setCartBusy(true);
+
+      const result = await apiFetch<ApiCartResponse>("/api/cart", {
+        method: "DELETE",
+        body: JSON.stringify({ productId }),
+      });
+
+      setCart(normalizeCart(result));
+    } catch (error) {
+      Alert.alert(
+        "Couldn't remove item",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setCartBusy(false);
+    }
+  }
+
+  async function clearCart() {
+    try {
+      setCartBusy(true);
+
+      const result = await apiFetch<ApiCartResponse>("/api/cart", {
+        method: "DELETE",
+        body: JSON.stringify({ clear: true }),
+      });
+
+      setCart(normalizeCart(result));
+    } catch (error) {
+      Alert.alert(
+        "Couldn't clear cart",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setCartBusy(false);
+    }
+  }
+
+  function startCheckout() {
+    if (!session) {
+      Alert.alert("Sign in required", "Please sign in before checking out.");
+      return;
+    }
+
+    if (cart.items.length === 0) {
+      Alert.alert("Your cart is empty", "Add something before checking out.");
+      return;
+    }
+
+    setCheckoutName(getUserName(session.user));
+    setCheckoutEmail(session.user.email ?? "");
+    setCheckoutPhone("");
+    setCheckoutAddress("");
+    setCheckoutCity("");
+    setCheckoutError("");
+    setScreen("checkout");
+  }
+
+  async function handlePlaceOrder() {
+    if (checkoutBusy) return;
+
+    setCheckoutError("");
+
+    const fullName = checkoutName.trim();
+    const email = checkoutEmail.trim().toLowerCase();
+    const phone = checkoutPhone.trim();
+    const address = checkoutAddress.trim();
+    const city = checkoutCity.trim();
+
+    if (fullName.length < 2) {
+      setCheckoutError("Please enter your full name.");
+      return;
+    }
+
+    if (
+      !email ||
+      email.length > 254 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+    ) {
+      setCheckoutError("Please enter a valid email address.");
+      return;
+    }
+
+    const phoneDigits = phone.replace(/\D/g, "");
+    if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+      setCheckoutError("Please enter a valid phone number.");
+      return;
+    }
+
+    if (address.length < 5) {
+      setCheckoutError("Please enter your delivery address.");
+      return;
+    }
+
+    if (city.length < 2) {
+      setCheckoutError("Please enter your city.");
+      return;
+    }
+
+    if (cart.items.length === 0) {
+      setCheckoutError("Your cart is empty.");
+      return;
+    }
+
+    try {
+      setCheckoutBusy(true);
+
+      const result = await apiFetch<{
+        orderNumber?: string;
+        accessToken?: string;
+        total?: number;
+        error?: string;
+      }>("/api/orders", {
+        method: "POST",
+        body: JSON.stringify({
+          idempotencyKey: createIdempotencyKey(),
+          customer: {
+            fullName,
+            email,
+            phone,
+            address,
+            city,
           },
-        });
+          items: cart.items.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+          })),
+        }),
+      });
 
-      if (error) {
-        throw error;
-      }
-
-      if (!data.url) {
+      if (!result.orderNumber) {
         throw new Error(
-          "Google sign-in URL was not created.",
+          result.error ??
+            "The order was created but no order number was returned.",
         );
       }
 
-      const result =
-        await WebBrowser.openAuthSessionAsync(
-          data.url,
+      setOrderNumber(result.orderNumber);
+
+      // The order has already been created successfully.
+      // Clearing the shared cart is a separate step, so a temporary
+      // cart-clearing failure must not make a successful order look failed.
+      try {
+        const cleared = await apiFetch<ApiCartResponse>("/api/cart", {
+          method: "DELETE",
+          body: JSON.stringify({ clear: true }),
+        });
+        setCart(normalizeCart(cleared));
+      } catch {
+        setCart({ id: cart.id, items: [] });
+      }
+
+      setScreen("success");
+    } catch (error) {
+      setCheckoutError(
+        error instanceof Error
+          ? error.message
+          : "We couldn't place your order. Please try again.",
+      );
+    } finally {
+      setCheckoutBusy(false);
+    }
+  }
+
+  async function signInWithGoogle() {
+    try {
+      const redirectTo = makeRedirectUri({
+        scheme: "nova",
+        path: "auth/callback",
+      });
+
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
           redirectTo,
+          skipBrowserRedirect: true,
+          queryParams: {
+            prompt: "select_account",
+          },
+        },
+      });
+
+      if (error) throw error;
+      if (!data.url) throw new Error("Google sign-in URL was not returned.");
+
+      const result = await WebBrowser.openAuthSessionAsync(
+        data.url,
+        redirectTo,
+      );
+
+      if (result.type === "success" && result.url) {
+        const callbackUrl = result.url;
+        const queryPart = callbackUrl.split("?")[1] ?? "";
+        const query = queryPart.split("#")[0];
+        const hash = callbackUrl.includes("#")
+          ? callbackUrl.split("#")[1]
+          : "";
+
+        const params = new URLSearchParams(
+          [query, hash].filter(Boolean).join("&"),
         );
 
-      if (result.type === "success") {
-        const url = result.url;
+        const accessToken = params.get("access_token");
+        const refreshToken = params.get("refresh_token");
 
-        const hash = url.split("#")[1];
+        if (accessToken && refreshToken) {
+          await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+        } else {
+          const code = params.get("code");
 
-        if (hash) {
-          const params = new URLSearchParams(hash);
-
-          const accessToken =
-            params.get("access_token");
-
-          const refreshToken =
-            params.get("refresh_token");
-
-          if (accessToken && refreshToken) {
-            const { error: sessionError } =
-              await supabase.auth.setSession({
-                access_token: accessToken,
-                refresh_token: refreshToken,
-              });
-
-            if (sessionError) {
-              throw sessionError;
-            }
+          if (code) {
+            await supabase.auth.exchangeCodeForSession(code);
           }
         }
       }
     } catch (error) {
       Alert.alert(
-        "Google sign-in failed",
-        error instanceof Error
-          ? error.message
-          : "Something went wrong.",
+        "Google sign-in",
+        error instanceof Error ? error.message : "Sign-in failed.",
       );
-    } finally {
-      setBusy(false);
     }
   }
 
-  /*
-   * Forgot password.
-   */
-  async function handleForgotPassword() {
-    if (!email.trim()) {
-      Alert.alert(
-        "Enter your email",
-        "Enter your email address first.",
-      );
-      return;
-    }
-
+  async function signOut() {
     try {
-      setBusy(true);
-
-      const { error } =
-        await supabase.auth.resetPasswordForEmail(
-          email.trim(),
-        );
-
-      if (error) {
-        throw error;
-      }
-
+      await supabase.auth.signOut();
+      setCart({ id: "", items: [] });
+      setScreen("account");
+    } catch {
       Alert.alert(
-        "Password reset",
-        "Check your email for the reset link.",
+        "Couldn't sign out",
+        "Please try again.",
       );
-    } catch (error) {
-      Alert.alert(
-        "Reset failed",
-        error instanceof Error
-          ? error.message
-          : "Something went wrong.",
-      );
-    } finally {
-      setBusy(false);
     }
   }
 
-  /*
-   * Sign out.
-   */
-  async function handleLogout() {
-    await supabase.auth.signOut();
+  async function refreshAll() {
+    setRefreshing(true);
 
-    setScreen("home");
+    await Promise.all([
+      loadProducts(),
+      session ? loadCart() : Promise.resolve(),
+    ]);
+
+    setRefreshing(false);
   }
 
-  /*
-   * Search products.
-   */
-  const filteredProducts = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    if (!query) {
-      return products;
-    }
-
-    return products.filter((product) => {
-      return (
-        product.name
-          .toLowerCase()
-          .includes(query) ||
-        product.category
-          .toLowerCase()
-          .includes(query) ||
-        product.description
-          .toLowerCase()
-          .includes(query)
-      );
-    });
-  }, [products, search]);
-
-  /*
-   * Featured products.
-   */
-  const featuredProducts = useMemo(() => {
-    return products.filter(
-      (product) => product.featured,
-    );
-  }, [products]);
-
-  /*
-   * Loading screen.
-   */
-  if (loading) {
+  function renderProductCard(product: Product) {
     return (
-      <SafeAreaView style={styles.center}>
-        <StatusBar barStyle="dark-content" />
+      <View key={product.id} style={styles.productCard}>
+        <View style={styles.productImagePlaceholder}>
+          {getAssetUrl(product.images?.[0]?.src) ? (
+            <Image
+              source={{ uri: getAssetUrl(product.images[0].src)! }}
+              style={styles.productImage}
+              resizeMode="cover"
+              accessibilityLabel={product.images[0].alt}
+            />
+          ) : (
+            <Text style={styles.productImageText}>NOVA</Text>
+          )}
+        </View>
 
-        <ActivityIndicator size="large" />
+        <View style={styles.productCardBody}>
+          {product.badge ? (
+            <Text style={styles.productBadge}>{product.badge}</Text>
+          ) : null}
 
-        <Text style={styles.loadingText}>
-          Loading NOVA...
-        </Text>
-      </SafeAreaView>
-    );
-  }
-
-  /*
-   * Login screen.
-   */
-  if (!session) {
-    return (
-      <SafeAreaView style={styles.authScreen}>
-        <StatusBar barStyle="dark-content" />
-
-        <ScrollView
-          contentContainerStyle={styles.authContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          <Text style={styles.logo}>NOVA</Text>
-
-          <Text style={styles.authTitle}>
-            {authMode === "login"
-              ? "Welcome back."
-              : "Create your account."}
+          <Text style={styles.productName} numberOfLines={2}>
+            {product.name}
           </Text>
 
-          <Text style={styles.authSubtitle}>
-            {authMode === "login"
-              ? "Sign in to continue shopping."
-              : "Create your NOVA account to get started."}
-          </Text>
+          <Text style={styles.productCategory}>{product.category}</Text>
 
-          <View style={styles.authCard}>
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              placeholder="Email address"
-              placeholderTextColor="#888"
-              autoCapitalize="none"
-              keyboardType="email-address"
-              style={styles.input}
-            />
-
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Password"
-              placeholderTextColor="#888"
-              secureTextEntry
-              style={styles.input}
-            />
-
-            <Pressable
-              style={styles.primaryButton}
-              onPress={handleEmailAuth}
-              disabled={busy}
-            >
-              <Text style={styles.primaryButtonText}>
-                {busy
-                  ? "Please wait..."
-                  : authMode === "login"
-                    ? "Sign in"
-                    : "Create account"}
-              </Text>
-            </Pressable>
-
-            {authMode === "login" && (
-              <Pressable
-                style={styles.forgotButton}
-                onPress={handleForgotPassword}
-                disabled={busy}
-              >
-                <Text style={styles.forgotText}>
-                  Forgot password?
-                </Text>
-              </Pressable>
-            )}
-
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-
-              <Text style={styles.dividerText}>
-                OR
-              </Text>
-
-              <View style={styles.dividerLine} />
-            </View>
-
-            <Pressable
-              style={styles.googleButton}
-              onPress={handleGoogleAuth}
-              disabled={busy}
-            >
-              <Text style={styles.googleButtonText}>
-                Continue with Google
-              </Text>
-            </Pressable>
-          </View>
+          <Text style={styles.productPrice}>{formatPrice(product.price)}</Text>
 
           <Pressable
-            onPress={() =>
-              setAuthMode(
-                authMode === "login"
-                  ? "signup"
-                  : "login",
-              )
-            }
+            disabled={cartBusy || product.stock < 1}
+            onPress={() => void addCartItem(product)}
+            style={({ pressed }) => [
+              styles.addButton,
+              pressed && styles.pressed,
+              (cartBusy || product.stock < 1) && styles.disabledButton,
+            ]}
           >
-            <Text style={styles.switchText}>
-              {authMode === "login"
-                ? "Don't have an account? Create one"
-                : "Already have an account? Sign in"}
+            <Text style={styles.addButtonText}>
+              {product.stock < 1 ? "OUT OF STOCK" : "ADD TO CART"}
             </Text>
           </Pressable>
-        </ScrollView>
-      </SafeAreaView>
+        </View>
+      </View>
     );
   }
 
-  /*
-   * HOME
-   */
-  function HomeScreen() {
+  function renderHome() {
+    const featured = products.filter((product) => product.featured).slice(0, 4);
+
     return (
       <ScrollView
-        style={styles.screen}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={refreshProducts}
+            onRefresh={() => void refreshAll()}
           />
         }
       >
-        <Header />
-
         <View style={styles.hero}>
-          <Text style={styles.eyebrow}>
-            CURATED OBJECTS
-          </Text>
+          <Text style={styles.eyebrow}>NOVA MOBILE</Text>
 
           <Text style={styles.heroTitle}>
-            Things made{"\n"}to be kept.
+            Premium things. Simply chosen.
           </Text>
 
           <Text style={styles.heroText}>
-            Thoughtful everyday objects for your
-            space, your desk and everything you
-            carry.
+            Shop the same NOVA store on your phone with the same account and
+            shared cart.
           </Text>
 
           <Pressable
-            style={styles.heroButton}
             onPress={() => setScreen("shop")}
+            style={({ pressed }) => [
+              styles.primaryButton,
+              pressed && styles.pressed,
+            ]}
           >
-            <Text style={styles.heroButtonText}>
-              Shop all products
-            </Text>
+            <Text style={styles.primaryButtonText}>SHOP NOW</Text>
           </Pressable>
         </View>
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>
-            Featured
-          </Text>
+          <Text style={styles.sectionTitle}>Featured</Text>
 
-          <Pressable
-            onPress={() => setScreen("shop")}
-          >
-            <Text style={styles.viewAll}>
-              View all
-            </Text>
+          <Pressable onPress={() => setScreen("shop")}>
+            <Text style={styles.linkText}>View all</Text>
           </Pressable>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.horizontalList}
-        >
-          {featuredProducts.map((product) => (
-            <ProductCard
-              key={product.id}
-              product={product}
-              compact
-            />
-          ))}
-        </ScrollView>
-      </ScrollView>
-    );
-  }
-
-  /*
-   * SHOP
-   */
-  function ShopScreen() {
-    return (
-      <ScrollView
-        style={styles.screen}
-        contentContainerStyle={styles.content}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={refreshProducts}
-          />
-        }
-      >
-        <Header />
-
-        <View style={styles.shopTitleRow}>
-          <Text style={styles.shopTitle}>
-            Shop
-          </Text>
-
-          <Text style={styles.productCount}>
-            {filteredProducts.length} products
-          </Text>
-        </View>
-
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder="Search products..."
-          placeholderTextColor="#888"
-          style={styles.searchInput}
-        />
-
-        {productsLoading &&
-        products.length === 0 ? (
-          <View style={styles.centerBlock}>
-            <ActivityIndicator size="large" />
-
-            <Text style={styles.loadingText}>
-              Loading products...
-            </Text>
-          </View>
-        ) : productsError ? (
+        {loadingProducts ? (
+          <ActivityIndicator size="large" />
+        ) : productError ? (
           <View style={styles.errorBox}>
-            <Text style={styles.errorTitle}>
-              Couldn't load products
-            </Text>
+            <Text style={styles.errorText}>{productError}</Text>
 
-            <Text style={styles.errorText}>
-              {productsError}
-            </Text>
-
-            <Pressable
-              style={styles.heroButton}
-              onPress={loadProducts}
-            >
-              <Text style={styles.heroButtonText}>
-                Try again
-              </Text>
+            <Pressable onPress={() => void loadProducts()}>
+              <Text style={styles.linkText}>Try again</Text>
             </Pressable>
           </View>
         ) : (
-          <View style={styles.productGrid}>
-            {filteredProducts.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-              />
-            ))}
-          </View>
+          featured.map(renderProductCard)
         )}
       </ScrollView>
     );
   }
 
-  /*
-   * CART
-   *
-   * This is intentionally a placeholder for now.
-   * We will connect it to /api/cart next.
-   */
-  function CartScreen() {
+  function renderShop() {
     return (
-      <View style={styles.emptyScreen}>
-        <Text style={styles.emptyTitle}>
-          Your cart
-        </Text>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void refreshAll()}
+          />
+        }
+      >
+        <View style={styles.pageHeading}>
+          <Text style={styles.pageTitle}>Shop</Text>
 
-        <Text style={styles.emptyText}>
-          Your shared website and mobile cart will
-          appear here next.
-        </Text>
-
-        <Pressable
-          style={styles.heroButton}
-          onPress={() => setScreen("shop")}
-        >
-          <Text style={styles.heroButtonText}>
-            Continue shopping
+          <Text style={styles.pageSubtitle}>
+            Browse the NOVA catalogue.
           </Text>
-        </Pressable>
-      </View>
+        </View>
+
+        {loadingProducts ? (
+          <ActivityIndicator size="large" />
+        ) : productError ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{productError}</Text>
+
+            <Pressable onPress={() => void loadProducts()}>
+              <Text style={styles.linkText}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : products.length === 0 ? (
+          <Text style={styles.mutedText}>No products found.</Text>
+        ) : (
+          products.map(renderProductCard)
+        )}
+      </ScrollView>
     );
   }
 
-  /*
-   * ACCOUNT
-   */
-  function AccountScreen() {
+  function renderCart() {
     return (
       <ScrollView
-        style={styles.screen}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void refreshAll()}
+          />
+        }
       >
-        <Header />
+        <View style={styles.pageHeading}>
+          <Text style={styles.pageTitle}>Your Cart</Text>
 
-        <View style={styles.accountCard}>
-          <Text style={styles.accountLabel}>
-            SIGNED IN AS
+          <Text style={styles.pageSubtitle}>
+            {cartCount} {cartCount === 1 ? "item" : "items"}
           </Text>
+        </View>
 
-          <Text style={styles.accountEmail}>
-            {session.user.email}
-          </Text>
+        {!session ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>Sign in to use your cart</Text>
 
-          <View style={styles.accountDivider} />
+            <Text style={styles.mutedText}>
+              Your NOVA cart is shared between the website and this mobile app.
+            </Text>
+
+            <Pressable
+              onPress={() => setScreen("account")}
+              style={styles.primaryButton}
+            >
+              <Text style={styles.primaryButtonText}>SIGN IN</Text>
+            </Pressable>
+          </View>
+        ) : loadingCart ? (
+          <ActivityIndicator size="large" />
+        ) : cart.items.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>Your cart is empty</Text>
+
+            <Text style={styles.mutedText}>
+              Add products from the shop and they will also appear on the NOVA
+              website.
+            </Text>
+
+            <Pressable
+              onPress={() => setScreen("shop")}
+              style={styles.primaryButton}
+            >
+              <Text style={styles.primaryButtonText}>
+                CONTINUE SHOPPING
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <>
+            {cart.items.map((item) => (
+              <View key={item.productId} style={styles.cartItem}>
+                <View style={styles.cartImagePlaceholder}>
+                  {getAssetUrl(item.image?.src) ? (
+                    <Image
+                      source={{ uri: getAssetUrl(item.image?.src)! }}
+                      style={styles.cartImage}
+                      resizeMode="cover"
+                      accessibilityLabel={item.image?.alt}
+                    />
+                  ) : (
+                    <Text style={styles.productImageText}>N</Text>
+                  )}
+                </View>
+
+                <View style={styles.cartItemInfo}>
+                  <Text style={styles.cartItemName} numberOfLines={2}>
+                    {item.name}
+                  </Text>
+
+                  <Text style={styles.cartItemPrice}>
+                    {formatPrice(item.price)}
+                  </Text>
+
+                  <View style={styles.quantityRow}>
+                    <Pressable
+                      disabled={cartBusy}
+                      onPress={() =>
+                        void updateCartItem(
+                          item.productId,
+                          item.quantity - 1,
+                        )
+                      }
+                      style={styles.quantityButton}
+                    >
+                      <Minus size={17} color="#111" />
+                    </Pressable>
+
+                    <Text style={styles.quantityText}>{item.quantity}</Text>
+
+                    <Pressable
+                      disabled={cartBusy}
+                      onPress={() =>
+                        void updateCartItem(
+                          item.productId,
+                          item.quantity + 1,
+                        )
+                      }
+                      style={styles.quantityButton}
+                    >
+                      <Plus size={17} color="#111" />
+                    </Pressable>
+
+                    <Pressable
+                      disabled={cartBusy}
+                      onPress={() => void removeCartItem(item.productId)}
+                      style={styles.removeButton}
+                    >
+                      <Trash2 size={16} color="#111" />
+<Text style={styles.removeButtonText}>Remove</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            ))}
+
+            <View style={styles.totalCard}>
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Subtotal</Text>
+
+                <Text style={styles.totalValue}>
+                  {formatPrice(subtotal)}
+                </Text>
+              </View>
+
+              <Text style={styles.mutedText}>
+                Secure checkout. Final stock is confirmed before your order is placed.
+              </Text>
+
+              <Pressable
+                disabled={cartBusy}
+                onPress={startCheckout}
+                style={({ pressed }) => [
+                  styles.checkoutButton,
+                  pressed && styles.pressed,
+                  cartBusy && styles.disabledButton,
+                ]}
+              >
+                <Text style={styles.checkoutButtonText}>CHECKOUT</Text>
+              </Pressable>
+
+              <Pressable
+                disabled={cartBusy}
+                onPress={() => void clearCart()}
+                style={styles.clearCartButton}
+              >
+                <Text style={styles.clearCartText}>Clear cart</Text>
+              </Pressable>
+            </View>
+          </>
+        )}
+      </ScrollView>
+    );
+  }
+
+  function renderCheckout() {
+    return (
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.pageHeading}>
+            <Text style={styles.pageTitle}>Checkout</Text>
+
+            <Text style={styles.pageSubtitle}>
+              Complete your delivery details.
+            </Text>
+          </View>
+
+          <View style={styles.formCard}>
+            <Text style={styles.formSectionTitle}>
+              Contact information
+            </Text>
+
+            <Text style={styles.inputLabel}>Full name</Text>
+
+            <TextInput
+              value={checkoutName}
+              onChangeText={setCheckoutName}
+              placeholder="Your full name"
+              autoCapitalize="words"
+              style={styles.input}
+            />
+
+            <Text style={styles.inputLabel}>Email address</Text>
+
+            <TextInput
+              value={checkoutEmail}
+              onChangeText={setCheckoutEmail}
+              placeholder="you@example.com"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              style={styles.input}
+            />
+
+            <Text style={styles.inputLabel}>Phone number</Text>
+
+            <TextInput
+              value={checkoutPhone}
+              onChangeText={setCheckoutPhone}
+              placeholder="+234..."
+              keyboardType="phone-pad"
+              style={styles.input}
+            />
+          </View>
+
+          <View style={styles.formCard}>
+            <Text style={styles.formSectionTitle}>
+              Delivery information
+            </Text>
+
+            <Text style={styles.inputLabel}>Address</Text>
+
+            <TextInput
+              value={checkoutAddress}
+              onChangeText={setCheckoutAddress}
+              placeholder="Delivery address"
+              multiline
+              style={[styles.input, styles.multilineInput]}
+            />
+
+            <Text style={styles.inputLabel}>City</Text>
+
+            <TextInput
+              value={checkoutCity}
+              onChangeText={setCheckoutCity}
+              placeholder="City"
+              autoCapitalize="words"
+              style={styles.input}
+            />
+          </View>
+
+          <View style={styles.formCard}>
+            <Text style={styles.formSectionTitle}>Order summary</Text>
+
+            {cart.items.map((item) => (
+              <View key={item.productId} style={styles.summaryRow}>
+                <Text style={styles.summaryName} numberOfLines={2}>
+                  {item.name} × {item.quantity}
+                </Text>
+
+                <Text style={styles.summaryPrice}>
+                  {formatPrice(item.price * item.quantity)}
+                </Text>
+              </View>
+            ))}
+
+            <View style={[styles.summaryRow, styles.summaryTotalRow]}>
+              <Text style={styles.summaryTotalLabel}>Total</Text>
+
+              <Text style={styles.summaryTotalValue}>
+                {formatPrice(subtotal)}
+              </Text>
+            </View>
+          </View>
+
+          {checkoutError ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{checkoutError}</Text>
+            </View>
+          ) : null}
 
           <Pressable
-            style={styles.signOutButton}
-            onPress={handleLogout}
+            disabled={checkoutBusy}
+            onPress={() => void handlePlaceOrder()}
+            style={({ pressed }) => [
+              styles.checkoutButton,
+              pressed && styles.pressed,
+              checkoutBusy && styles.disabledButton,
+            ]}
           >
-            <Text style={styles.signOutText}>
-              Sign out
+            {checkoutBusy ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.checkoutButtonText}>PLACE ORDER</Text>
+            )}
+          </Pressable>
+
+          <Pressable
+            disabled={checkoutBusy}
+            onPress={() => setScreen("cart")}
+            style={styles.backButton}
+          >
+            <View style={styles.backButtonRow}>
+              <ArrowLeft size={18} color="#111" />
+              <Text style={styles.backButtonText}>Back to cart</Text>
+            </View>
+          </Pressable>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    );
+  }
+
+  function renderSuccess() {
+    return (
+      <ScrollView contentContainerStyle={styles.successContainer}>
+        <View style={styles.successIcon}>
+          <CheckCircle2 size={46} color="#111" strokeWidth={1.8} />
+        </View>
+
+        <Text style={styles.successTitle}>Order confirmed</Text>
+
+        <Text style={styles.successText}>
+          Thank you for shopping with NOVA. Your order has been received.
+        </Text>
+
+        <View style={styles.orderNumberCard}>
+          <Text style={styles.orderNumberLabel}>ORDER NUMBER</Text>
+
+          <Text style={styles.orderNumber}>{orderNumber}</Text>
+        </View>
+
+        <Text style={styles.successText}>
+          Your confirmation email will be sent to the email address you used at
+          checkout.
+        </Text>
+
+        <Pressable
+          onPress={() => setScreen("shop")}
+          style={styles.primaryButton}
+        >
+          <Text style={styles.primaryButtonText}>CONTINUE SHOPPING</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => setScreen("account")}
+          style={styles.secondaryButton}
+        >
+          <Text style={styles.secondaryButtonText}>VIEW ACCOUNT</Text>
+        </Pressable>
+      </ScrollView>
+    );
+  }
+
+  function renderAccount() {
+    if (!session) {
+      return (
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <View style={styles.accountHero}>
+            <Text style={styles.eyebrow}>NOVA ACCOUNT</Text>
+
+            <Text style={styles.pageTitle}>Welcome back.</Text>
+
+            <Text style={styles.pageSubtitle}>
+              Sign in with Google to use your shared cart and account.
             </Text>
+
+            <Pressable
+              onPress={() => void signInWithGoogle()}
+              style={styles.googleButton}
+            >
+              <Text style={styles.googleButtonText}>
+                CONTINUE WITH GOOGLE
+              </Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      );
+    }
+
+    return (
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <View style={styles.accountHero}>
+          <Text style={styles.eyebrow}>NOVA ACCOUNT</Text>
+
+          <Text style={styles.pageTitle}>You're signed in.</Text>
+
+          <Text style={styles.pageSubtitle}>
+            {session.user.email ?? "Your NOVA account"}
+          </Text>
+        </View>
+
+        <View style={styles.accountCard}>
+          <Text style={styles.accountCardTitle}>Shared cart</Text>
+
+          <Text style={styles.mutedText}>
+            {cartCount} {cartCount === 1 ? "item" : "items"} currently in your
+            cart.
+          </Text>
+
+          <Pressable
+            onPress={() => setScreen("cart")}
+            style={styles.secondaryButton}
+          >
+            <Text style={styles.secondaryButtonText}>VIEW CART</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.accountCard}>
+          <Text style={styles.accountCardTitle}>Account</Text>
+
+          <Text style={styles.mutedText}>
+            Signed in as {session.user.email ?? "your account"}.
+          </Text>
+
+          <Pressable
+            onPress={() => void signOut()}
+            style={styles.signOutButton}
+          >
+            <View style={styles.signOutRow}>
+              <LogOut size={17} color="#111" />
+              <Text style={styles.signOutText}>SIGN OUT</Text>
+            </View>
           </Pressable>
         </View>
       </ScrollView>
     );
   }
 
-  /*
-   * Choose which screen to display.
-   */
-  function renderScreen() {
-    if (screen === "home") {
-      return <HomeScreen />;
-    }
+  function renderCurrentScreen() {
+    switch (screen) {
+      case "shop":
+        return renderShop();
 
-    if (screen === "shop") {
-      return <ShopScreen />;
-    }
+      case "cart":
+        return renderCart();
 
-    if (screen === "cart") {
-      return <CartScreen />;
-    }
+      case "account":
+        return renderAccount();
 
-    return <AccountScreen />;
+      case "checkout":
+        return renderCheckout();
+
+      case "success":
+        return renderSuccess();
+
+      case "home":
+      default:
+        return renderHome();
+    }
+  }
+
+  if (loadingAuth) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.loadingScreen}>
+          <ActivityIndicator size="large" />
+          <Text style={styles.loadingText}>Loading NOVA…</Text>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   return (
-    <SafeAreaView style={styles.app}>
-      <StatusBar barStyle="dark-content" />
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.app}>
+        <View style={styles.header}>
+          <Pressable onPress={() => setScreen("home")}>
+            <Text style={styles.logo}>NOVA</Text>
+          </Pressable>
 
-      <View style={styles.main}>
-        {renderScreen()}
-      </View>
+          <Pressable
+            onPress={() => setScreen("cart")}
+            style={styles.headerCart}
+            accessibilityLabel="Open cart"
+          >
+            <ShoppingCart size={21} color="#111" strokeWidth={2} />
+            <Text style={styles.headerCartText}>CART ({cartCount})</Text>
+          </Pressable>
+        </View>
 
-      <View style={styles.bottomNav}>
-        <NavButton
-          label="Home"
-          active={screen === "home"}
-          onPress={() => setScreen("home")}
-        />
+        <View style={styles.content}>{renderCurrentScreen()}</View>
 
-        <NavButton
-          label="Shop"
-          active={screen === "shop"}
-          onPress={() => setScreen("shop")}
-        />
+        {screen !== "checkout" && screen !== "success" ? (
+          <View style={styles.bottomNav}>
+            <Pressable onPress={() => setScreen("home")} style={styles.navItem}>
+              <Home size={20} strokeWidth={screen === "home" ? 2.6 : 1.8} color="#111" />
+              <Text style={[styles.navText, screen === "home" && styles.navTextActive]}>HOME</Text>
+            </Pressable>
 
-        <NavButton
-          label="Cart"
-          active={screen === "cart"}
-          onPress={() => setScreen("cart")}
-        />
+            <Pressable onPress={() => setScreen("shop")} style={styles.navItem}>
+              <Store size={20} strokeWidth={screen === "shop" ? 2.6 : 1.8} color="#111" />
+              <Text style={[styles.navText, screen === "shop" && styles.navTextActive]}>SHOP</Text>
+            </Pressable>
 
-        <NavButton
-          label="Account"
-          active={screen === "account"}
-          onPress={() => setScreen("account")}
-        />
+            <Pressable onPress={() => setScreen("cart")} style={styles.navItem}>
+              <View style={styles.navIconWrap}>
+                <ShoppingBag size={20} strokeWidth={screen === "cart" ? 2.6 : 1.8} color="#111" />
+                {cartCount > 0 ? (
+                  <View style={styles.navBadge}>
+                    <Text style={styles.navBadgeText}>{cartCount > 9 ? "9+" : cartCount}</Text>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={[styles.navText, screen === "cart" && styles.navTextActive]}>BAG</Text>
+            </Pressable>
+
+            <Pressable onPress={() => setScreen("account")} style={styles.navItem}>
+              <UserRound size={20} strokeWidth={screen === "account" ? 2.6 : 1.8} color="#111" />
+              <Text style={[styles.navText, screen === "account" && styles.navTextActive]}>ACCOUNT</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
     </SafeAreaView>
   );
 }
 
-/*
- * Header
- */
-function Header() {
-  return (
-    <View style={styles.header}>
-      <Text style={styles.logoSmall}>
-        NOVA
-      </Text>
-
-      <Text style={styles.headerLabel}>
-        Store
-      </Text>
-    </View>
-  );
-}
-
-/*
- * Product card
- */
-function ProductCard({
-  product,
-  compact = false,
-}: {
-  product: Product;
-  compact?: boolean;
-}) {
-  const imagePath = product.images?.[0]?.src;
-
-  const imageUrl = imagePath
-    ? imagePath.startsWith("http")
-      ? imagePath
-      : `https://nova-martshop.vercel.app${imagePath}`
-    : null;
-
-  const soldOut = product.stock <= 0;
-
-  return (
-    <View
-      style={[
-        styles.productCard,
-        compact && styles.compactProductCard,
-      ]}
-    >
-      <View style={styles.productImageContainer}>
-        {imageUrl ? (
-          <Image
-            source={{ uri: imageUrl }}
-            style={styles.productImage}
-            resizeMode="cover"
-          />
-        ) : (
-          <View style={styles.imagePlaceholder}>
-            <Text style={styles.imagePlaceholderText}>
-              NOVA
-            </Text>
-          </View>
-        )}
-
-        {product.badge && (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>
-              {product.badge}
-            </Text>
-          </View>
-        )}
-      </View>
-
-      <View style={styles.productInfo}>
-        <Text
-          style={styles.productName}
-          numberOfLines={2}
-        >
-          {product.name}
-        </Text>
-
-        <Text style={styles.productCategory}>
-          {product.category}
-        </Text>
-
-        <View style={styles.productBottom}>
-          <Text style={styles.productPrice}>
-            ${product.price}
-          </Text>
-
-          {soldOut ? (
-            <Text style={styles.soldOutText}>
-              Sold out
-            </Text>
-          ) : !compact ? (
-            <Pressable
-              style={styles.addButton}
-              onPress={() =>
-                Alert.alert(
-                  "Cart coming next",
-                  `${product.name} will be connected to your shared cart next.`,
-                )
-              }
-            >
-              <Text style={styles.addButtonText}>
-                Add
-              </Text>
-            </Pressable>
-          ) : null}
-        </View>
-      </View>
-    </View>
-  );
-}
-
-/*
- * Bottom navigation button
- */
-function NavButton({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      style={styles.navButton}
-      onPress={onPress}
-    >
-      <Text
-        style={[
-          styles.navLabel,
-          active && styles.navLabelActive,
-        ]}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#fff",
+  },
+  flex: {
+    flex: 1,
+  },
   app: {
     flex: 1,
-    backgroundColor: "#F7F6F2",
+    backgroundColor: "#fff",
   },
-
-  main: {
-    flex: 1,
-  },
-
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#F7F6F2",
-  },
-
-  loadingText: {
-    marginTop: 12,
-    color: "#666",
-    fontSize: 14,
-  },
-
-  authScreen: {
-    flex: 1,
-    backgroundColor: "#F7F6F2",
-  },
-
-  authContent: {
-    flexGrow: 1,
-    justifyContent: "center",
-    padding: 24,
-  },
-
-  logo: {
-    fontSize: 34,
-    fontWeight: "800",
-    letterSpacing: 5,
-    color: "#171717",
-    marginBottom: 42,
-  },
-
-  authTitle: {
-    fontSize: 34,
-    lineHeight: 40,
-    fontWeight: "700",
-    color: "#171717",
-  },
-
-  authSubtitle: {
-    fontSize: 16,
-    lineHeight: 23,
-    color: "#666",
-    marginTop: 10,
-    marginBottom: 26,
-  },
-
-  authCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: "#E6E3DD",
-  },
-
-  input: {
-    height: 54,
-    borderWidth: 1,
-    borderColor: "#DDD9D1",
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    color: "#171717",
-    marginBottom: 12,
-    backgroundColor: "#FAFAF8",
-  },
-
-  primaryButton: {
-    height: 54,
-    borderRadius: 12,
-    backgroundColor: "#171717",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  primaryButtonText: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-
-  forgotButton: {
-    alignItems: "center",
-    marginTop: 16,
-  },
-
-  forgotText: {
-    color: "#555",
-    fontSize: 14,
-  },
-
-  divider: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginVertical: 20,
-  },
-
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: "#E5E2DC",
-  },
-
-  dividerText: {
-    fontSize: 12,
-    color: "#999",
-  },
-
-  googleButton: {
-    height: 54,
-    borderWidth: 1,
-    borderColor: "#DAD7D0",
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  googleButtonText: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#171717",
-  },
-
-  switchText: {
-    textAlign: "center",
-    color: "#555",
-    marginTop: 22,
-    fontSize: 14,
-  },
-
-  screen: {
-    flex: 1,
-    backgroundColor: "#F7F6F2",
-  },
-
   content: {
-    padding: 20,
-    paddingBottom: 30,
+    flex: 1,
   },
-
   header: {
+    height: 62,
+    paddingHorizontal: 20,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#ddd",
     flexDirection: "row",
-    alignItems: "flex-end",
-    marginBottom: 24,
+    alignItems: "center",
+    justifyContent: "space-between",
   },
-
-  logoSmall: {
-    fontSize: 25,
+  logo: {
+    fontSize: 22,
     fontWeight: "800",
-    letterSpacing: 3,
-    color: "#171717",
+    letterSpacing: 2,
   },
-
-  headerLabel: {
-    fontSize: 14,
-    color: "#777",
-    marginLeft: 9,
+  headerCart: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
-
+  headerCartText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1,
+  },
+  scrollContent: {
+    padding: 20,
+    paddingBottom: 40,
+  },
   hero: {
-    backgroundColor: "#171717",
-    borderRadius: 26,
-    padding: 24,
-    minHeight: 390,
-    justifyContent: "flex-end",
-    marginBottom: 34,
+    paddingTop: 26,
+    paddingBottom: 32,
   },
-
   eyebrow: {
-    color: "#B9B5AC",
     fontSize: 11,
     fontWeight: "700",
     letterSpacing: 2,
-    marginBottom: 14,
+    color: "#777",
+    marginBottom: 12,
   },
-
   heroTitle: {
-    color: "#FFFFFF",
     fontSize: 40,
-    lineHeight: 43,
+    lineHeight: 45,
     fontWeight: "700",
+    letterSpacing: -1.5,
   },
-
   heroText: {
-    color: "#C8C5BE",
-    fontSize: 15,
-    lineHeight: 23,
-    marginTop: 16,
-    marginBottom: 24,
+    marginTop: 14,
+    fontSize: 16,
+    lineHeight: 24,
+    color: "#666",
+    maxWidth: 500,
   },
-
-  heroButton: {
-    backgroundColor: "#171717",
+  primaryButton: {
+    marginTop: 22,
     minHeight: 50,
-    paddingHorizontal: 20,
-    borderRadius: 12,
+    paddingHorizontal: 22,
+    borderRadius: 26,
+    backgroundColor: "#111",
     alignItems: "center",
     justifyContent: "center",
-    alignSelf: "flex-start",
   },
-
-  heroButtonText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "700",
+  primaryButtonText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1,
   },
-
+  secondaryButton: {
+    marginTop: 12,
+    minHeight: 50,
+    paddingHorizontal: 22,
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: "#111",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  secondaryButtonText: {
+    color: "#111",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
   sectionHeader: {
+    marginTop: 8,
+    marginBottom: 14,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 16,
   },
-
   sectionTitle: {
     fontSize: 24,
     fontWeight: "700",
-    color: "#171717",
   },
-
-  viewAll: {
-    fontSize: 14,
-    color: "#555",
-  },
-
-  horizontalList: {
-    gap: 14,
-    paddingBottom: 8,
-  },
-
-  shopTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 16,
-  },
-
-  shopTitle: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: "#171717",
-  },
-
-  productCount: {
+  linkText: {
     fontSize: 13,
-    color: "#777",
+    fontWeight: "700",
+    textDecorationLine: "underline",
   },
-
-  searchInput: {
-    height: 52,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#E4E1DB",
-    borderRadius: 13,
-    paddingHorizontal: 16,
+  pageHeading: {
+    paddingTop: 12,
+    paddingBottom: 22,
+  },
+  pageTitle: {
+    fontSize: 32,
+    lineHeight: 38,
+    fontWeight: "700",
+    letterSpacing: -0.8,
+  },
+  pageSubtitle: {
+    marginTop: 7,
     fontSize: 15,
-    color: "#171717",
-    marginBottom: 20,
+    lineHeight: 22,
+    color: "#666",
   },
-
-  centerBlock: {
+  productCard: {
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: "#e5e5e5",
+    borderRadius: 20,
+    overflow: "hidden",
+    backgroundColor: "#fff",
+  },
+  productImagePlaceholder: {
+    height: 190,
+    backgroundColor: "#f3f3f3",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 80,
   },
-
-  errorBox: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "#E4E1DB",
-  },
-
-  errorTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#171717",
-  },
-
-  errorText: {
-    fontSize: 14,
-    lineHeight: 21,
-    color: "#666",
-    marginTop: 8,
-    marginBottom: 18,
-  },
-
-  productGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    gap: 16,
-  },
-
-  productCard: {
-    width: "47%",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#E8E5DF",
-  },
-
-  compactProductCard: {
-    width: 220,
-  },
-
-  productImageContainer: {
-    height: 190,
-    backgroundColor: "#ECE9E2",
-    position: "relative",
-  },
-
   productImage: {
     width: "100%",
     height: "100%",
   },
-
-  imagePlaceholder: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#E5E1D8",
-  },
-
-  imagePlaceholderText: {
-    fontSize: 20,
+  productImageText: {
+    fontSize: 13,
     fontWeight: "800",
-    letterSpacing: 3,
-    color: "#777",
+    letterSpacing: 2,
+    color: "#aaa",
   },
-
-  badge: {
-    position: "absolute",
-    top: 10,
-    left: 10,
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 20,
+  productCardBody: {
+    padding: 16,
   },
-
-  badgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#171717",
+  productBadge: {
+    alignSelf: "flex-start",
+    marginBottom: 7,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: "#111",
+    color: "#fff",
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 1,
   },
-
-  productInfo: {
-    padding: 13,
-  },
-
   productName: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: "700",
-    color: "#171717",
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: "600",
   },
-
   productCategory: {
+    marginTop: 5,
     fontSize: 12,
     color: "#888",
-    marginTop: 4,
-    textTransform: "capitalize",
   },
-
-  productBottom: {
+  productPrice: {
+    marginTop: 10,
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  addButton: {
+    marginTop: 14,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: "#111",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addButtonText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  pressed: {
+    opacity: 0.72,
+  },
+  disabledButton: {
+    opacity: 0.45,
+  },
+  errorBox: {
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: "#fff1f1",
+    borderWidth: 1,
+    borderColor: "#f0cccc",
+  },
+  errorText: {
+    color: "#a40000",
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  mutedText: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 21,
+    color: "#777",
+  },
+  emptyCard: {
+    padding: 22,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#e5e5e5",
+  },
+  emptyTitle: {
+    fontSize: 21,
+    fontWeight: "700",
+  },
+  cartItem: {
+    flexDirection: "row",
+    padding: 14,
+    marginBottom: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#e5e5e5",
+  },
+  cartImagePlaceholder: {
+    width: 78,
+    height: 78,
+    borderRadius: 14,
+    backgroundColor: "#f3f3f3",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cartImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 14,
+  },
+  cartItemInfo: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  cartItemName: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "600",
+  },
+  cartItemPrice: {
+    marginTop: 5,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  quantityRow: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  quantityButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#ccc",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quantityButtonText: {
+    fontSize: 18,
+  },
+  quantityText: {
+    width: 35,
+    textAlign: "center",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  removeButton: {
+    marginLeft: 10,
+    paddingVertical: 8,
+  },
+  removeButtonText: {
+    fontSize: 12,
+    color: "#888",
+    textDecorationLine: "underline",
+  },
+  totalCard: {
+    marginTop: 8,
+    padding: 18,
+    borderRadius: 20,
+    backgroundColor: "#f7f7f7",
+  },
+  totalRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 12,
   },
-
-  productPrice: {
-    fontSize: 15,
+  totalLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  totalValue: {
+    fontSize: 21,
+    fontWeight: "800",
+  },
+  checkoutButton: {
+    marginTop: 18,
+    minHeight: 54,
+    borderRadius: 27,
+    backgroundColor: "#111",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkoutButtonText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  clearCartButton: {
+    marginTop: 14,
+    alignItems: "center",
+    padding: 8,
+  },
+  clearCartText: {
+    color: "#777",
+    fontSize: 13,
+    textDecorationLine: "underline",
+  },
+  formCard: {
+    marginBottom: 16,
+    padding: 18,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#e5e5e5",
+  },
+  formSectionTitle: {
+    marginBottom: 15,
+    fontSize: 18,
     fontWeight: "700",
-    color: "#171717",
   },
-
-  addButton: {
-    backgroundColor: "#171717",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 9,
-  },
-
-  addButtonText: {
-    color: "#FFFFFF",
+  inputLabel: {
+    marginTop: 12,
+    marginBottom: 7,
     fontSize: 12,
     fontWeight: "700",
+    color: "#555",
   },
-
-  soldOutText: {
-    color: "#999",
-    fontSize: 11,
+  input: {
+    minHeight: 48,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#d8d8d8",
+    backgroundColor: "#fff",
+    fontSize: 15,
+    color: "#111",
+  },
+  multilineInput: {
+    minHeight: 90,
+    paddingTop: 13,
+    textAlignVertical: "top",
+  },
+  summaryRow: {
+    paddingVertical: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#ddd",
+  },
+  summaryName: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 19,
+    color: "#555",
+  },
+  summaryPrice: {
+    fontSize: 14,
     fontWeight: "600",
   },
-
-  emptyScreen: {
-    flex: 1,
+  summaryTotalRow: {
+    marginTop: 6,
+    paddingTop: 16,
+    borderBottomWidth: 0,
+  },
+  summaryTotalLabel: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  summaryTotalValue: {
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  backButton: {
+    marginTop: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  backButtonRow: {
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    padding: 30,
-    backgroundColor: "#F7F6F2",
+    gap: 7,
   },
-
-  emptyTitle: {
-    fontSize: 28,
+  backButtonText: {
+    fontSize: 13,
+    color: "#666",
+    textDecorationLine: "underline",
+  },
+  successContainer: {
+    flexGrow: 1,
+    padding: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  successIcon: {
+    width: 74,
+    height: 74,
+    borderRadius: 37,
+    backgroundColor: "#111",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  successIconText: {
+    color: "#fff",
+    fontSize: 38,
+    fontWeight: "500",
+  },
+  successTitle: {
+    marginTop: 22,
+    fontSize: 32,
     fontWeight: "700",
-    color: "#171717",
     textAlign: "center",
   },
-
-  emptyText: {
+  successText: {
+    marginTop: 12,
+    maxWidth: 440,
     fontSize: 15,
     lineHeight: 23,
-    color: "#777",
+    color: "#666",
     textAlign: "center",
-    marginTop: 12,
-    marginBottom: 24,
   },
-
-  accountCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 20,
+  orderNumberCard: {
+    width: "100%",
+    marginTop: 22,
     padding: 20,
-    borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderRadius: 18,
+    backgroundColor: "#f7f7f7",
+    alignItems: "center",
   },
-
-  accountLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 1.5,
-    color: "#999",
+  orderNumberLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 2,
+    color: "#888",
   },
-
-  accountEmail: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#171717",
+  orderNumber: {
     marginTop: 8,
+    fontSize: 22,
+    fontWeight: "800",
+    letterSpacing: 0.5,
   },
-
-  accountDivider: {
-    height: 1,
-    backgroundColor: "#E8E5DF",
-    marginVertical: 22,
+  accountHero: {
+    paddingTop: 20,
+    paddingBottom: 26,
   },
-
-  signOutButton: {
-    height: 50,
-    borderWidth: 1,
-    borderColor: "#D8D4CC",
-    borderRadius: 11,
+  googleButton: {
+    marginTop: 24,
+    minHeight: 52,
+    borderRadius: 26,
+    backgroundColor: "#111",
     alignItems: "center",
     justifyContent: "center",
   },
-
-  signOutText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#171717",
+  googleButtonText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
   },
-
+  accountCard: {
+    marginBottom: 14,
+    padding: 20,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#e5e5e5",
+  },
+  accountCardTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  signOutButton: {
+    marginTop: 18,
+    minHeight: 48,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "#111",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  signOutRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  signOutText: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
   bottomNav: {
-    height: 72,
-    backgroundColor: "#FFFFFF",
-    borderTopWidth: 1,
-    borderTopColor: "#E7E4DE",
+    height: 68,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#ddd",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-around",
-    paddingBottom: 8,
+    backgroundColor: "#fff",
   },
-
-  navButton: {
+  navIconWrap: {
+    position: "relative",
+    marginBottom: 3,
+  },
+  navBadge: {
+    position: "absolute",
+    top: -7,
+    right: -10,
+    minWidth: 15,
+    height: 15,
+    paddingHorizontal: 3,
+    borderRadius: 8,
+    backgroundColor: "#111",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  navBadgeText: {
+    color: "#fff",
+    fontSize: 8,
+    fontWeight: "800",
+  },
+  navItem: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
   },
-
-  navLabel: {
-    fontSize: 12,
+  navText: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.8,
     color: "#999",
   },
-
-  navLabelActive: {
-    color: "#171717",
-    fontWeight: "700",
+  navTextActive: {
+    color: "#111",
+  },
+  loadingScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadingText: {
+    marginTop: 12,
+    color: "#777",
   },
 });

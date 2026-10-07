@@ -10,9 +10,17 @@ import { maskEmail } from "@/lib/utils/mask-email";
 
 export const metadata: Metadata = { title: "Order confirmed", robots: { index: false, follow: false } };
 
-export default async function OrderSuccessPage(props: PageProps<"/order-success/[orderNumber]">) {
-  const { orderNumber } = await props.params;
-  const sp = await props.searchParams;
+type OrderSuccessPageProps = {
+  params: Promise<{ orderNumber: string }>;
+  searchParams: Promise<{ token?: string }>;
+};
+
+export default async function OrderSuccessPage({
+  params,
+  searchParams,
+}: OrderSuccessPageProps) {
+  const { orderNumber } = await params;
+  const sp = await searchParams;
   const token = typeof sp.token === "string" ? sp.token : null;
 
   const user = await getUser();
